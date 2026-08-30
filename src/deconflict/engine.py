@@ -69,6 +69,7 @@ class EngineConfig:
     cache_dir: str | Path = "~/.cache/deconflict"
     dry_run: bool = False
     follow_symlinks: bool = False
+    file_type_tools: dict[str, str] = field(default_factory=dict)  # kind -> [tools] key
 
 
 @dataclass
@@ -109,7 +110,10 @@ class Engine:
             self.cache.save()
 
     def analyze(self, result: ScanResult) -> list[tuple[ConflictGroup, GroupAnalysis]]:
-        return [(g, analyze_group(g, g.base, g.conflicts)) for g in result.groups]
+        return [
+            (g, analyze_group(g, g.base, g.conflicts, tools=self.tools.found))
+            for g in result.groups
+        ]
 
     def auto_choice(self, ga: GroupAnalysis, rule: str) -> Action:
         """Map a --auto rule (base|copy|newest|bigger) to an Action."""
@@ -162,16 +166,38 @@ class Engine:
         """Short, filesystem-safe subdir label for a group's backups."""
         return group.base.name if group.base else group.key
 
+    def launcher(self) -> Launcher:
+        return Launcher(self.tools, self.cfg.file_type_tools)
+
     def launch_tool(
         self, group: ConflictGroup, ga: GroupAnalysis, tool: ToolType, target: Path
     ) -> None:
         """Run an external tool on `target` and wait for it to exit (blocking)."""
-        launcher = Launcher(self.tools)
-        launcher.run(group, ga, tool, target)
+        self.launcher().run(group, ga, tool, target)
 
     def suggest(self, path: Path) -> ToolType:
         """The tool a frontend should suggest for `path`, based on its type."""
-        return Launcher(self.tools).suggested(path)
+        return self.launcher().suggested(path)
+
+    def supported_tools(self, ga: GroupAnalysis) -> list[ToolType]:
+        """Tool-action letters available for this group's file kind."""
+        kind = ga.kind
+        if kind == "kdbx":
+            return [ToolType.KEEPASS]
+        if kind == "office":
+            return [ToolType.OFFICE]
+        if kind in ("audio", "image", "video"):
+            return [ToolType.VIEWER]
+        if kind == "other":
+            return [ToolType.EDITOR]
+        return [ToolType.EDITOR, ToolType.DIFF]
+
+    def tool_status(self) -> list[tuple[str, str | None, list[str], str | None]]:
+        """(name, found-path, candidates, install-hint) for every configured tool."""
+        return [
+            (n, self.tools.get(n), self.tools.candidates(n), self.tools.hint(n))
+            for n in self.tools.names()
+        ]
 
 
 def path_of(a) -> Path:

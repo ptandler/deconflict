@@ -63,3 +63,34 @@ def test_media_supported_dispatch(sample_dir):
     assert media.media_supported(base) is False
     img, _ = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
     assert media.media_supported(img) is True
+
+
+def test_file_kind_classification():
+    from pathlib import Path
+
+    assert media.file_kind(Path("a.md")) == "text"
+    assert media.file_kind(Path("a.mp3")) == "audio"
+    assert media.file_kind(Path("a.jpg")) == "image"
+    assert media.file_kind(Path("a.ods")) == "office"
+    assert media.file_kind(Path("a.kdbx")) == "kdbx"
+    assert media.file_kind(Path("a.bin"), is_text=False) == "other"
+    assert media.file_kind(Path("a.bin"), is_text=True) == "text"
+
+
+def test_metadata_equal_on_tag_diff(sample_dir):
+    base, copy = _pair(sample_dir, MP3)
+    assert media.metadata_equal(base, copy, "audio") is False
+    same = media.metadata_equal(base, base, "audio")
+    assert same is True
+
+
+def test_metadata_diff_mentions_tags(sample_dir):
+    base, copy = _pair(sample_dir, MP3)
+    diff = media.metadata_diff(base, copy, "audio")
+    assert diff is not None
+    assert "tags differ" in diff
+
+
+def test_metadata_diff_none_for_text(sample_dir):
+    base, copy = _pair(sample_dir, "Readme.md")
+    assert media.metadata_diff(base, copy, "text") is None

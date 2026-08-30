@@ -1,4 +1,4 @@
-"""Resolver tests: safety, copy→verify→remove, dry-run, keep semantics."""
+"""Resolver tests: safety rename / copy→verify→remove fallback, dry-run, keep semantics."""
 
 from __future__ import annotations
 

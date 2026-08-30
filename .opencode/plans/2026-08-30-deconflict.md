@@ -1,6 +1,6 @@
 # Plan: deconflict — interactive sync-conflict resolver
 
-**Date:** 2026-08-30 · **Status:** core implemented & tested (63 green)
+**Date:** 2026-08-30 · **Status:** core implemented & tested (75 green)
 
 ## Goal
 Interactive CLI to find and resolve "conflicted copy"-style sync conflict files:
@@ -69,8 +69,8 @@ tests/                      # pytest; fixtures copied to tmpdir
 2. **Cache**: JSON file-cache (path → size/mtime/sha/is_text) keyed by dir set; on restart renders cached results instantly, background rescan merges; `--no-cache`, `--refresh`.
 3. **Analyze** per group: size, hash, mtime (FS + name-stamp shown), content-equality, newer-by-mtime, text/binary sniff.
 4. **Media diff**: mutagen (audio), Pillow (images), ffprobe (video), exiftool fallback; zip-office (ods/xlsx/docx) text via stdlib zipfile; `.kdbx` → keepass recipe.
-5. **Interactive** per group: summary table + numbered menu — keep base / keep copy / text diff / meld / $EDITOR / viewer / office / keepass merge (kdbx) / skip / keep-both / batch rule for rest. `--auto {base|copy|newest|bigger}` non-interactive.
-6. **Resolve**: losers → backup (copy→verify→remove), rename copy→base when keeping copy; per-action confirm; JSONL decisions + end summary.
+5. **Interactive** per group: summary table (size, vs-base arrow, metadata diff per copy) + kind-aware numbered menu — keep base / keep copy / **view both files in suggested app** / terminal diff (text) / meld / $EDITOR / keep-both / skip / **quit** / **(?) tools & install hints**. Menu shows only actions supported for the file type. `--auto {base|copy|newest|bigger}` non-interactive.
+6. **Resolve**: losers → backup (atomic rename when same filesystem; copy→verify→remove only on cross-device EXDEV), rename copy→base when keeping copy; per-action confirm; JSONL decisions + end summary.
 
 ## Config (`--init-config` writes; TOML)
 ```toml
@@ -106,19 +106,24 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 - [x] Cache: `pytest_sessionfinish` hook in tests/conftest.py prunes the shared default cache of dead-dir entries after the run
 - [x] Fix pre-existing `move_to_backup` ENAMETOOLONG bug (unbounded collision re-prefix) → bounded, name-capped `_unique_target`
 - [x] Tests for all of the above (cache cleanup, CLI cache clean, resolve invalidation, long-name collision) — 63 passing
-- [ ] Fix bare `deconflict` (no args) → interactive resolve
-  - Root cause likely `HOME`/`Path.home()` resolution under `uv run`; `invoke_without_command=True` added
-  - Diagnostic: bare run reports "no directories" while direct `_cfg`/load() sees dirs — needs CliRunner test to confirm
-- [ ] our simple resolve CLI should offer only actions supported for current file type or at least mark those that are supported. in the config we should configure the actions for each file type, e.g. which tool to use. it should also have recommendations for external tools to install (and ideally suggest a mise comment to do so)
-- [ ] "view" should open file in suggested app, so no separate "(o)ffice (k)eepass" - and it should open both files and wait then.
-- [ ] interactive resolve should have "(q)uit" option
-- [ ] lets improve the initial "diff" table:
-  - [ ] include a flag if content is identical
-  - [ ] indicate which file is larger / smaller
-  - [ ] for mp3 / pictures and all file types where we can get meta data (maybe also office types?): show diff for meta-data and show if ONLY meta data has been changed (if possible)
-- [ ] add an option to printout which internal or external tool will be used for the different actions (like "(?) print tools" maybe)
-- [ ] Write CliRunner test for bare-mode interactive (monkeypatch config path, feed "s"=skip) to fix deterministically
-- [ ] First commit via caveman-commit skill
+- [x] Fix bare `deconflict` (no args) → interactive resolve
+  - Root cause: bare mode had no config signal — with no config file there are no `default_dirs`, so it correctly reported "no directories" (exit 2) but without guidance. `invoke_without_command=True` was already in place.
+  - CliRunner tests prove bare mode runs the interactive loop (config with dirs + skip), (q)uit aborts cleanly, and the no-config case now prints `init-config` guidance (exit 2).
+- [x] our simple resolve CLI should offer only actions supported for current file type or at least mark those that are supported. in the config we should configure the actions for each file type, e.g. which tool to use. it should also have recommendations for external tools to install (and ideally suggest a mise comment to do so)
+  - `media.file_kind()` classifies groups (audio/image/video/office/kdbx/text/other); config `[file_types]` overrides which `[tools]` entry opens each kind; menu letters (d/m/e) only render for text, office/keepass folded into (v)iew.
+  - `(?)tools` prints found/missing with install hints (INSTALL_HINTS in tools.py). (mise comment idea noted — these are OS app tools, hints give apt/brew.)
+- [x] "view" should open file in suggested app, so no separate "(o)ffice (k)eepass" - and it should open both files and wait then.
+  - `(v)iew` → `Launcher.view_commands()`: editor/office get both paths in one command; viewers one command per file; kdbx runs the keepass merge recipe; CLI pauses on Enter after open.
+- [x] interactive resolve should have "(q)uit" option
+  - (q)uit aborts after `N` groups, prints "aborted after N of total".
+- [x] lets improve the initial "diff" table: identical flag / larger-smaller / metadata-only
+  - columns: size, **vs base** (`=` or `≠ ↑/↓ <delta>`), **metadata** (same/diff + tag change detail), suggest; footer lists per-copy metadata verdicts for media. Office/audio compare extracted summaries; mp3 shows actual tag changes (`title: A → B`).
+- [x] add an option to printout which internal or external tool will be used for the different actions (like "(?) print tools" maybe)
+  - `(?)tools` shows kind → view tool + found/missing status + install hints for every configured tool.
+- [x] Write CliRunner test for bare-mode interactive (monkeypatch config path, feed "s"=skip) to fix deterministically
+  - `test_bare_skips_all_groups_interactively`, quit, `?`-tools, table-flags, no-dirs guidance.
+- [x] `move_to_backup` fast path: atomic `os.replace` when same filesystem, EXDEV fallback to copy→verify→remove (resolve.py; tests green)
+- [ ] Commit this session's batch (resolve fast-path, kind-aware menu, view/quit/tools, table flags) via caveman-commit skill
 
 ## Open follow-ups
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.

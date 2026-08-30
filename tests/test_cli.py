@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from deconflict.cli import app
@@ -167,3 +169,65 @@ def test_cache_kept_after_dry_run_resolve(sample_dir, tmp_path):
     assert (cache / f"{key}.json").exists()
     runner.invoke(app, ["resolve", "--config", str(cfgfile), "--auto", "newest", "--dry-run"])
     assert (cache / f"{key}.json").exists()  # untouched
+
+
+def _home_cfg(tmp_path, sample_dir) -> str:
+    """A config for the bare-mode tests: default dirs = sample copy."""
+    cfgfile = tmp_path / "home" / ".config" / "deconflict" / "config.toml"
+    cfgfile.parent.mkdir(parents=True)
+    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n')
+    return str(cfgfile)
+
+
+def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch):
+    """`deconflict` with no subcommand runs the interactive loop (todo: bare mode)."""
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    files_before = {p.name: p.read_bytes() for p in sample_dir.iterdir() if p.is_file()}
+    result = runner.invoke(app, [], input="s\n" * 10)
+    assert result.exit_code == 0
+    assert "resolved 6 group(s)" in result.stdout
+    # skipping must not touch any file
+    files_after = {p.name: p.read_bytes() for p in sample_dir.iterdir() if p.is_file()}
+    assert files_after == files_before
+
+
+def test_interactive_quit_prints_summary(sample_dir, tmp_path, monkeypatch):
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    result = runner.invoke(app, [], input="q\n")
+    assert "aborted after 0 of 6 group(s)" in result.stdout
+
+
+def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch):
+    """(?)tools prints the tool map, then the loop continues."""
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    result = runner.invoke(app, [], input="?\ns\n" * 10)
+    assert result.exit_code == 0
+    assert "file kind:" in result.stdout
+    assert "tools:" in result.stdout
+
+
+def test_interactive_table_has_flags(sample_dir, tmp_path, monkeypatch):
+    """The group table shows vs-base and metadata columns."""
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    result = runner.invoke(app, [], input="q\n")
+    assert "vs base" in result.stdout
+    assert "metadata" in result.stdout
+
+
+def test_bare_no_dirs_explains(tmp_path, monkeypatch):
+    """Bare mode without dirs/config exits 2 with guidance (was 'no directories')."""
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(tmp_path / "missing.toml"))
+    result = runner.invoke(app, [])
+    assert result.exit_code == 2
+    assert "no directories" in result.stdout
+    assert "init-config" in result.stdout

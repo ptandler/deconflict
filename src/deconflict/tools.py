@@ -19,6 +19,18 @@ DEFAULTS: dict[str, list[str]] = {
     "viewer": ["xdg-open", "start"],
 }
 
+INSTALL_HINTS: dict[str, str] = {
+    "diff": "meld: apt install meld  ·  brew install meld",
+    "editor": "set $EDITOR, or override [tools] editor in config",
+    "image_viewer": "eog: apt install eog  ·  brew install eog",
+    "office": "soffice: apt install libreoffice  ·  brew install --cask libreoffice",
+    "keepass": "keepassxc-cli: apt install keepassxc  ·  brew install keepassxc",
+    "mp3_editor": "kid3-cli: apt install kid3-cli  ·  brew install kid3-cli",
+    "video_probe": "ffprobe: apt install ffmpeg  ·  brew install ffmpeg",
+    "exiftool": "exiftool: apt install libimage-exiftool-perl  ·  brew install exiftool",
+    "viewer": "xdg-open: your system default opener, no install needed",
+}
+
 
 @dataclass(frozen=True)
 class Tools:
@@ -31,6 +43,15 @@ class Tools:
 
     def get(self, name: str) -> str | None:
         return self.found.get(name)
+
+    def names(self) -> list[str]:
+        return list(DEFAULTS)
+
+    def candidates(self, name: str) -> list[str]:
+        return _candidates(name)
+
+    def hint(self, name: str) -> str | None:
+        return INSTALL_HINTS.get(name)
 
     def require(self, name: str, action: str) -> str:
         tool = self.get(name)

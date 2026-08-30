@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import difflib
 from pathlib import Path
 
 import typer
@@ -48,7 +49,7 @@ def _require_dirs(cfg: Config) -> Engine:
     if not cfg.engine.dirs:
         console.print(
             "[red]no directories.[/red] Pass dirs or set [scan].default_dirs in config "
-            "(see `deconflict config`)."
+            "(see `deconflict config`); run `deconflict init-config` to create one."
         )
         raise typer.Exit(2)
     return Engine(cfg.engine)
@@ -145,6 +146,10 @@ def config(
         console.print(escape("[tools]"))
         for name, path_ in cfg.tools.items():
             console.print(f"  {name} = {path_!r}")
+    if cfg.engine.file_type_tools:
+        console.print(escape("[file_types]"))
+        for kind, tool in cfg.engine.file_type_tools.items():
+            console.print(f"  {kind} = {tool!r}")
 
 
 @app.command()
@@ -249,13 +254,26 @@ def _run_interactive(engine: Engine, groups) -> None:
     for i, (group, ga) in enumerate(groups, 1):
         while True:
             _show_group(engine, group, ga, i, total)
-            action = _prompt(group, ga)
+            action = _prompt(engine, group, ga)
+            if action is None:  # (q)uit
+                console.print(f"\n[done]aborted after {i - 1} of {total} group(s)")
+                return
             if action.kind is ActionKind.TOOL:
+                if action.tool is ToolType.VIEW and not engine.launcher().view_commands(
+                    group, action.target
+                ):
+                    console.print(
+                        "[yellow]no viewer/editor found for this type — see (?)tools[/yellow]"
+                    )
+                    continue
                 engine.launch_tool(group, ga, action.tool or ToolType.EDITOR, action.target)
+                if action.tool is ToolType.VIEW:
+                    console.print("[dim]press [bold]Enter[/bold] when done reviewing[/dim]")
+                    input()
                 continue
             _apply(engine, group, action)
             break
-    console.print(f"\n[done][/done] resolved {total} group(s)")
+    console.print(f"\n[done]resolved {total} group(s)")
 
 
 def _apply(engine: Engine, group: ConflictGroup, action: Action) -> None:
@@ -282,54 +300,129 @@ def _show_group(
     table = Table(title=f"[bold]Group {i}/{total}[/bold] — {title}")
     table.add_column("file", style="cyan")
     table.add_column("size")
-    table.add_column("mtime")
+    table.add_column("vs base")
+    table.add_column("metadata")
     table.add_column("suggest")
-    for a in ([ga.base] if ga.base else []) + ga.copies:
+    rows: list[tuple] = ([(ga.base, None)] if ga.base else []) + [
+        (c, i) for i, c in enumerate(ga.copies)
+    ]
+    for a, idx in rows:
         if a is None:
             continue
-        table.add_row(
-            a.path.name, _human(a.info.size), _fmt_mtime(a.info.mtime), engine.suggest(a.path).value
-        )
+        if idx is None:  # base row
+            vs = "[dim]base[/dim]"
+            meta = "[dim]—[/dim]"
+        else:
+            delta = a.info.size - ga.base.info.size if ga.base else 0
+            if ga.base and a.info.sha == ga.base.info.sha:
+                vs = "[dim]=[/dim]"
+            elif ga.base is None:
+                vs = f"[dim]{'↑' if delta > 0 else '↓' if delta < 0 else '='}[/dim]"
+            else:
+                arrow = "↑" if delta > 0 else "↓" if delta < 0 else "≠"
+                size_bit = f" {_human(abs(delta))}" if delta else ""
+                vs = f"[yellow]≠ {arrow}{size_bit}[/yellow]"
+            md = ga.meta[idx] if idx < len(ga.meta) else None
+            if md is None:
+                meta = "[dim]—[/dim]"
+            elif md is True:
+                meta = "[green]same[/green]"
+            else:
+                detail = (ga.meta_diff[idx] if idx < len(ga.meta_diff) else None) or ""
+                meta = "[yellow]diff[/yellow]" + (f" ({detail})" if detail else "")
+        table.add_row(a.path.name, _human(a.info.size), vs, meta, engine.suggest(a.path).value)
     console.print(table)
     if ga.all_equal:
         console.print("[dim]copies identical in content[/dim]")
     else:
-        console.print("[yellow]copies differ[/yellow]")
+        console.print("[yellow]copies differ in content[/yellow]")
+        for idx, c in enumerate(ga.copies):
+            if idx >= len(ga.meta) or ga.meta[idx] is None:
+                continue
+            if ga.meta[idx] is True:
+                console.print(f"[dim]  {c.path.name}: content differs, metadata same[/dim]")
+            else:
+                detail = ga.meta_diff[idx] or "metadata differs"
+                console.print(f"[yellow]  {c.path.name}: {detail}[/yellow]")
 
 
-def _prompt(group: ConflictGroup, ga: GroupAnalysis) -> Action:
+def _prompt(engine: Engine, group: ConflictGroup, ga: GroupAnalysis) -> Action | None:
+    target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
     while True:
-        menu = (
-            "(b)ase (c)opy (e)ditor (d)iff (m)eld (v)iewer (o)ffice (k)eepass (h)keep-both (s)kip: "
-        )
-        ans = input(menu).strip().lower()
+        ans = input(_menu_text(ga)).strip().lower()
         if ans in ("b", "base"):
             return Action.keep_base()
         if ans in ("c", "copy"):
-            target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
             return Action.keep_copy(target) if target else Action.skip()
-        if ans == "h":
+        if ans in ("v", "view"):
+            return Action.tool_action(ToolType.VIEW, target) if target else None
+        if ans in ("d", "diff") and ga.kind in ("text", "other"):
+            _print_text_diff(group, target)
+            continue
+        if ans in ("m", "meld") and ga.kind == "text":
+            return Action.tool_action(ToolType.DIFF, target) if target else None
+        if ans in ("e", "editor") and ga.kind in ("text", "other"):
+            return Action.tool_action(ToolType.EDITOR, target) if target else None
+        if ans in ("h", "keep-both"):
             return Action.keep_both()
         if ans in ("s", "skip"):
             return Action.skip()
-        tool = _tool_from_hint(ans, ga)
-        if tool is not None:
-            return tool
+        if ans in ("q", "quit", "exit"):
+            return None
+        if ans in ("?", "help", "tools"):
+            _print_tools(engine, ga)
+            continue
         print("invalid choice")
 
 
-def _tool_from_hint(ans: str, ga: GroupAnalysis) -> Action | None:
-    tool = {
-        "e": ToolType.EDITOR,
-        "m": ToolType.DIFF,
-        "v": ToolType.VIEWER,
-        "o": ToolType.OFFICE,
-        "k": ToolType.KEEPASS,
-    }.get(ans)
-    if tool is None:
-        return None
-    target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
-    return Action.tool_action(tool, target) if target else None
+def _menu_text(ga: GroupAnalysis) -> str:
+    parts = ["(b)ase", "(c)opy", "(v)iew"]
+    if ga.kind in ("text", "other"):
+        parts += ["(d)iff", "(e)ditor"] if ga.kind == "text" else ["(e)ditor"]
+    if ga.kind == "text":
+        parts += ["(m)eld"]
+    parts += ["(h)keep-both", "(s)kip", "(q)uit", "(?)tools"]
+    return " ".join(parts) + ": "
+
+
+def _print_text_diff(group: ConflictGroup, target: Path | None) -> None:
+    if target is None:
+        console.print("[yellow]nothing to diff[/yellow]")
+        return
+    other = next((f for f in group.files if f.resolve() != target.resolve()), None)
+    if other is None:
+        console.print("[yellow]nothing to diff against[/yellow]")
+        return
+    try:
+        a = other.read_text(encoding="utf-8", errors="replace").splitlines()
+        b = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        console.print(f"[red]diff failed: {exc}[/red]")
+        return
+    diff = list(difflib.unified_diff(a, b, fromfile=str(other), tofile=str(target), lineterm=""))
+    if not diff:
+        console.print("[dim]no textual difference[/dim]")
+        return
+    for line in diff:
+        if line.startswith("+"):
+            color = "green"
+        elif line.startswith("-"):
+            color = "red"
+        else:
+            color = "dim"
+        console.print(f"[{color}]{escape(line)}[/{color}]")
+
+
+def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
+    tool_key = engine.launcher().kind_tool(ga.kind)
+    console.print(f"[bold]file kind:[/bold] {ga.kind} → view tool: {tool_key}")
+    console.print("[bold]tools:[/bold]")
+    for name, found, candidates, hint in engine.tool_status():
+        if found:
+            console.print(f"  [green]{name}[/green]: {found}")
+        else:
+            suffix = f"  ({hint})" if hint else ""
+            console.print(f"  [red]{name}[/red]: missing ({', '.join(candidates)}){suffix}")
 
 
 def main() -> None:

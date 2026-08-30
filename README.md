@@ -43,8 +43,11 @@ Custom regex patterns go under `[[scan.patterns]]` in the config.
 
 ## How conflicts are resolved
 
-For each group you choose: **keep base / keep copy / text diff / meld / $EDITOR / viewer /
-office / keepass merge (kdbx) / skip / keep-both / batch rule for rest.**
+For each group you choose (menu adapts to the file type): **(b)ase / (c)opy /
+(v)iew both files in the suggested app / (d)iff in terminal / (m)eld / (e)ditor /
+(h)keep-both / (s)kip / (q)uit / (?)tools.** View opens both the base and the
+conflict copy in the app configured for that kind (editor, office, viewer,
+KeePass merge for `.kdbx`).
 
 Losers are **moved** to a backup dir outside the scan roots (`~/deconflict-backups/…`
 by default) — never hard-deleted. A JSONL decision log records every choice.
@@ -54,6 +57,8 @@ by default) — never hard-deleted. A JSONL decision log records every choice.
 
 Run `deconflict --init-config` for a documented template at
 `~/.config/deconflict/config.toml`. See `config.example.toml`.
+`[file_types]` maps each file kind (text, audio, image, video, office, kdbx)
+to the `[tools]` entry that `(v)iew` uses.
 
 ## Recommended external apps
 

@@ -42,6 +42,31 @@ def is_kdbx(path: Path) -> bool:
     return path.suffix.lower() == ".kdbx"
 
 
+KINDS = ("audio", "image", "video", "office", "kdbx", "text", "other")
+"""File kinds the CLI understands; each maps to a suggested tool."""
+
+
+def file_kind(path: Path, is_text: bool | None = None) -> str:
+    """Classify `path` into one of KINDS for tool selection.
+
+    Extension-based kinds win; anything else follows the content sniff
+    (`is_text`) and unknown-but-likely-text files fall back to "text".
+    """
+    if is_kdbx(path):
+        return "kdbx"
+    if is_audio(path):
+        return "audio"
+    if is_image(path):
+        return "image"
+    if is_video(path):
+        return "video"
+    if is_office(path):
+        return "office"
+    if is_text is False:
+        return "other"
+    return "text"
+
+
 _ID3_FIELDS = {
     "TIT2": "title",
     "TPE1": "artist",
@@ -175,3 +200,42 @@ def summary(path: Path, tools: dict[str, str] | None = None) -> str:
 
 def media_supported(path: Path) -> bool:
     return any((is_audio(path), is_image(path), is_video(path), is_office(path)))
+
+
+_META_KINDS = ("audio", "image", "video", "office")
+
+
+def _audio_tags(path: Path) -> dict[str, str]:
+    """Return the audio tag summary as an ordered dict (empty on failure)."""
+    summary = audio_summary(path)
+    if summary.startswith("<"):
+        return {}
+    out: dict[str, str] = {}
+    for part in summary.split(", "):
+        if "=" not in part:
+            continue
+        key, _, value = part.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def metadata_equal(a: Path, b: Path, kind: str, tools: dict[str, str] | None = None) -> bool | None:
+    """True when both files carry identical metadata; None when not a media kind."""
+    if kind not in _META_KINDS:
+        return None
+    return summary(a, tools) == summary(b, tools)
+
+
+def metadata_diff(a: Path, b: Path, kind: str, tools: dict[str, str] | None = None) -> str | None:
+    """A short human string of what metadata differs (None when equal / not media)."""
+    if kind not in _META_KINDS:
+        return None
+    if metadata_equal(a, b, kind, tools):
+        return None
+    if kind == "audio":
+        ta, tb = _audio_tags(a), _audio_tags(b)
+        changed = [k for k in dict.fromkeys([*ta, *tb]) if ta.get(k) != tb.get(k)]
+        if changed:
+            bits = ", ".join(f"{k}: {ta.get(k, '∅')} → {tb.get(k, '∅')}" for k in changed)
+            return f"tags differ ({bits})"
+    return "metadata differs"

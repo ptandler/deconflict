@@ -24,6 +24,16 @@ cache_dir = "~/.cache/deconflict"
 # keepass = "keepassxc-cli"
 # mp3_editor = "kid3-cli"
 
+[file_types]
+# Which [tools] entry opens/edits each file kind (kinds: text, other, audio,
+# image, video, office, kdbx). The interactive menu's (v)iew uses this.
+# text = "editor"
+# audio = "mp3_editor"
+# image = "image_viewer"
+# video = "viewer"
+# office = "office"
+# kdbx = "keepass"
+
 # Custom regex conflict patterns. Base/winner semantics for each pattern:
 #   base_name   - regex with exactly one capturing group: the base (non-conflict) name.
 #   conflict_name - derived from base by the matcher unless overridden.

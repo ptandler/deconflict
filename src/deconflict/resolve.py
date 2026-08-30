@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -60,7 +62,11 @@ class Resolver:
             raise ValueError(f"{path} is inside the backup dir; refusing to move")
 
     def move_to_backup(self, path: Path, group_key: str) -> Resolved:
-        """Move `path` into the backup root, preserving its relative name. Copy→verify→remove."""
+        """Move `path` into the backup root, preserving its relative name.
+
+        Same-filesystem moves use an atomic rename; cross-device moves (EXDEV)
+        fall back to copy→verify→remove.
+        """
         if not path.exists():
             return Resolved("missing", detail="already gone")
         self._ensure_safe(path)
@@ -71,12 +77,17 @@ class Resolver:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         target = _unique_target(target_dir, target)
-        shutil.copy2(path, target)
-        with open(target, "rb") as a, open(path, "rb") as b:
-            if a.read() != b.read():
-                target.unlink()
-                raise RuntimeError(f"backup verify failed for {path}")
-        path.unlink()
+        try:
+            os.replace(path, target)
+        except OSError as e:
+            if e.errno != errno.EXDEV:
+                raise  # EACCES/EPERM/EBUSY: propagate, don't downgrade to copy
+            shutil.copy2(path, target)
+            with open(target, "rb") as a, open(path, "rb") as b:
+                if a.read() != b.read():
+                    target.unlink()
+                    raise RuntimeError(f"backup verify failed for {path}") from None
+            path.unlink()
         return Resolved("move", moved_to=target)
 
     def keep_base(
