@@ -1,22 +1,40 @@
-# deconflict
+# deconflict - help me solving sync file conflicts!
 
-Interactive resolver for **"conflicted copy"-style sync conflict files**:
-Nextcloud `(conflicted copy YYYY-MM-DD HHMMSS)`, pacman `.pacnew/.pacsave/.pacorig`,
-and Syncthing `.sync-conflict-*`. Pattern-driven and generic, so custom formats can be
-added via the config. Core logic is UI-free, so a future Textual TUI / PySide GUI can reuse it.
+Interactive resolver for **"conflicted copy"-style sync conflict files**.
+Supports:
+- [Nextcloud](https://nextcloud.com/) `(conflicted copy YYYY-MM-DD HHMMSS)`
+- [pacman](https://wiki.archlinux.org/title/Pacman) `.pacnew/.pacsave/.pacorig`
+- [Syncthing](https://syncthing.net/) `.sync-conflict-*`
+
+It's Pattern-driven and generic, so custom formats can be added via the config.
+
+It is similar to the `pacdiff` for pacman. In order to be helpful with other file formats and not just plain text, it
+supports several viewers, editors, diff tools, and also extracts metadata (images, audio, video) 
+and also shows metadata diffs.
 
 ## Install
 
-```sh
-uv tool install .        # or: pipx install .
-```
+Clone this repo.
 
-Runs from any directory. Python >= 3.11.
+```sh
+mise install             # a very convenient way to install `python` and `uv` 
+uv sync                  # install python dependencies
+uv tool install .        # install deconflict to PATH (or: instead of uv use `pipx install .`)
+```
 
 ## Usage
 
+First you should create your config with `deconflict init-config` and then edit the generated
+`~/.config/deconflict/config.toml`. Most likely you want to configure `default_dirs` so that you don't have to pass paths via CLI, and maybe you want also to set `enabled_patterns`.
+
+Then you can simply do `deconflict` and resolve conflicts one by one.
+
+## Commands
+
+TODO: check if complete and correct
+
 ```sh
-deconflict                      # interactive resolve (scans configured dirs then menus)
+deconflict                      # run `scan` and `resolve`
 deconflict scan                 # scan configured dirs, list conflict groups, exit
 deconflict scan ~/Sync          # scan a specific dir recursively
 deconflict scan --pattern nextcloud   # restrict to one pattern group
@@ -24,6 +42,8 @@ deconflict resolve              # interactive per-group resolution
 deconflict resolve --auto newest      # non-interactive: base|copy|newest|bigger
 deconflict resolve --dry-run    # preview without touching the filesystem
 deconflict init-config          # write ~/.config/deconflict/config.toml
+deconflict config               # show active config
+deconflict config tools         # show active config
 deconflict patterns             # list recognized conflict patterns
 deconflict --help               # all commands & options
 ```
