@@ -24,7 +24,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.6", "pytest>=8"]
+dev = ["ruff>=0.6", "pytest>=8", "textual>=0.80"]
+tui = ["textual>=0.80"]
 
 [project.scripts]
 deconflict = "deconflict.cli:app"

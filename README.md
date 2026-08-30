@@ -3,7 +3,7 @@
 Interactive resolver for **"conflicted copy"-style sync conflict files**:
 Nextcloud `(conflicted copy YYYY-MM-DD HHMMSS)`, pacman `.pacnew/.pacsave/.pacorig`,
 and Syncthing `.sync-conflict-*`. Pattern-driven and generic, so custom formats can be
-added via the config. Core logic is UI-free, so a future Textual TUI / PySide GUI can reuse it.
+added via the config.
 
 ## Install
 
@@ -12,7 +12,7 @@ uv tool install .        # or: pipx install .
 ```
 
 Runs from any directory. Python >= 3.11.
-
+https://github.com/ptandler/deconflict
 ## Usage
 
 ```sh
