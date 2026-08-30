@@ -1,6 +1,6 @@
 # Plan: deconflict — interactive sync-conflict resolver
 
-**Date:** 2026-08-30 · **Status:** core implemented & tested (75 green)
+**Date:** 2026-08-30 · **Status:** core implemented & tested (79 green)
 
 ## Goal
 Interactive CLI to find and resolve "conflicted copy"-style sync conflict files:
@@ -120,12 +120,22 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
   - columns: size, **vs base** (`=` or `≠ ↑/↓ <delta>`), **metadata** (same/diff + tag change detail), suggest; footer lists per-copy metadata verdicts for media. Office/audio compare extracted summaries; mp3 shows actual tag changes (`title: A → B`).
 - [x] add an option to printout which internal or external tool will be used for the different actions (like "(?) print tools" maybe)
   - `(?)tools` shows kind → view tool + found/missing status + install hints for every configured tool.
+- [x] when deconflict says "metadata differs", add "(m)etadata" menu option to show common + diff fields
+  - `media.metadata_fields(path, kind, tools)` returns a field→value dict per kind (audio tags / image dims+EXIF / video streams / office content); `_print_metadata_diff` renders a table with base and copy as columns and common (dimmed) + differing fields as rows, section-separated. `(m)` reuses the meld key (mutually exclusive: meld is text-only, metadata diff is media-only).
+- [x] overview table polish: first `role` column (base / copy N), per-row differing metadata fields in the `metadata` cell (only the differing), and removed the `suggest` column.
+- [x] overview table columns: re-added `mtime`; merged size + vs-base delta into one `size` column (`3.4 MB (↓ 993 B)`); `#` column shows `#0` for base and `#N` for copies.
+- [x] numbered keep actions supporting multiple copies: menu shows `(0) keep base`, `(1) keep copy #1`, ... and the resolver already backs up all non-chosen conflicts, so any copy can be kept. (`_keep_by_number` maps `#0`→base / `#N`→copy.)
+- [x] truncate long metadata values (office XML) in the overview cell and `(m)etadata` table via `_truncate_meta` (≤70 chars + `… (+N more)`), so cell text stays readable.
+- [x] metadata diff table headers now show the file number (`#0`, `#N`) plus a truncated filename (`_meta_diff_columns`, 40 char cap), and columns use `overflow="ellipsis"` so long names truncate instead of wrapping into tall multi-line headers.
 - [x] Write CliRunner test for bare-mode interactive (monkeypatch config path, feed "s"=skip) to fix deterministically
   - `test_bare_skips_all_groups_interactively`, quit, `?`-tools, table-flags, no-dirs guidance.
 - [x] `move_to_backup` fast path: atomic `os.replace` when same filesystem, EXDEV fallback to copy→verify→remove (resolve.py; tests green)
-- [ ] Commit this session's batch (resolve fast-path, kind-aware menu, view/quit/tools, table flags) via caveman-commit skill
+- [ ] improve metadata for office documents. could it be that it currently takes the plain xml?
+- [ ] is there a char-based diff, e.g. highlight the changes within a line?
+- [ ] the final message of resolve still says "resolved x groups, even if some where skipped and not resolved
 
 ## Open follow-ups
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
 - Future: Textual TUI, PySide GUI.
-- Multiple conflicts per base (group currently assumes ≤1 copy in menu; model supports many).
+- Office metadata: parse docx/xlsx/ods XML (document.xml/sharedStrings/content.xml) into real per-field metadata (text runs, cell values) instead of raw truncated XML — see metadata fields item above; also lets the `(m)etadata` table show meaningful common/diff rows for office.
+- Multi-copy: menu keep actions now numbered per copy (resolver already handles N conflicts); consider applying the same numbering to `(v)iew`/`(m)etadata` targets.
