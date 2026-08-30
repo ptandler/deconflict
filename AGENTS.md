@@ -4,6 +4,7 @@ Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `
 
 ## Main plan
 Read `.opencode/plans/2026-08-30-deconflict.md` first — it contains the decisions, structure, behavior, and current todo list. This file is the quick reference for conventions.
+For each task you work: when starting and finishing the task, please update plan; you might want to include important results, also at intermediate steps. be brief and concise!
 
 ## Setup & commands (mise + uv)
 ```
