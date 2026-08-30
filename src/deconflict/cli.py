@@ -16,7 +16,7 @@ from .cache import clean_cache
 from .config import Config, default_path, load, write_init_config
 from .engine import Action, ActionKind, Engine
 from .launchers import ToolType
-from .media import ATTR_CREATED, ATTR_MODIFIED, ATTR_SIZE, META_ATTR_FIELDS
+from .media import ATTR_CREATED, ATTR_MODIFIED, ATTR_SIZE, KINDS, META_ATTR_FIELDS
 from .patterns import build_patterns
 from .scan import ConflictGroup
 
@@ -162,14 +162,29 @@ def init_config(path: Path | None = typer.Option(None, "--path", help="Write con
     console.print(f"wrote config: {written}")
 
 
-@app.command()
-def config(
+config_app = typer.Typer(
+    help="Configuration: print the effective config (default) or per-filetype tools.",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
+app.add_typer(config_app, name="config")
+
+
+@config_app.callback()
+def _config(
+    ctx: typer.Context,
     path: Path | None = typer.Option(
         None, "--path", help="Config file to read (default: user config)"
     ),
 ) -> None:
     """Print the effective config (defaults merged with the loaded file)."""
-    cfg = load(path)
+    cfg = load(path or ctx.obj)
+    ctx.obj = cfg
+    if ctx.invoked_subcommand is None:
+        _print_config(cfg)
+
+
+def _print_config(cfg: Config) -> None:
     if cfg.source is None:
         console.print(
             "[bold]config file:[/bold] none — built-in defaults (run `deconflict init-config`)"
@@ -194,6 +209,23 @@ def config(
         console.print(escape("[file_types]"))
         for kind, tool in cfg.engine.file_type_tools.items():
             console.print(escape(f"  {kind} = {tool!r}"))
+
+
+@config_app.command("tools")
+def config_tools(
+    ctx: typer.Context,
+    path: Path | None = typer.Option(
+        None, "--path", help="Config file to read (default: user config)"
+    ),
+) -> None:
+    """Show which tool backs each file type (view/edit/meta) — the (?)tools view
+    for every kind, with found/missing status and install hints."""
+    cfg = load(path) if path else ctx.obj
+    engine = Engine(cfg.engine)
+    for kind in KINDS:
+        _print_kind_tools(engine, kind)
+    cfg_path = cfg.engine.config_path or default_path()
+    _print_tools_footer(cfg_path)
 
 
 @app.command()
@@ -773,13 +805,15 @@ def _size_meta_cell(size: int, other: int | None) -> str:
     return f"{cell} [yellow]({arrow}{bit})[/yellow]"
 
 
-def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
+def _print_kind_tools(engine: Engine, kind: str) -> None:
+    """One file kind's tool mapping + found/missing status + hints.
+
+    Shared by the interactive (?)tools action and `deconflict config tools`.
+    """
     la = engine.launcher()
-    cfg_path = engine.cfg.config_path or default_path()
-    console.print(f"[bold]file kind:[/bold] {ga.kind}")
-    console.print(f"  view: {la.kind_tool(ga.kind)} · edit: {la.edit_tool(ga.kind)}")
-    console.print("[bold]tools used for this file:[/bold]")
-    for key in la.tools_for(ga.kind):
+    console.print(f"[bold]file kind:[/bold] {kind}")
+    console.print(f"  view: {la.kind_tool(kind)} · edit: {la.edit_tool(kind)}")
+    for key in la.tools_for(kind):
         found = engine.tools.get(key)
         if found:
             console.print(f"  [green]{key}[/green]: {found}")
@@ -789,10 +823,21 @@ def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
             console.print(
                 f"  [red]{key}[/red]: missing ({', '.join(engine.tools.candidates(key))}){suffix}"
             )
-    console.print(
-        f"[dim]configure tools in ({cfg_path}) — sections [tools], [file_types], "
-        "[file_types_edit]; run `deconflict init-config` to write a template.[/dim]"
+
+
+def _print_tools_footer(cfg_path: Path) -> None:
+    """Dim hint: where to configure the tools (escaped — section names are markup)."""
+    footer = (
+        f"configure tools in ({cfg_path}) — sections [tools], [file_types], "
+        "[file_types_edit]; run `deconflict init-config` to write a template."
     )
+    console.print(f"[dim]{escape(footer)}[/dim]")
+
+
+def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
+    cfg_path = engine.cfg.config_path or default_path()
+    _print_kind_tools(engine, ga.kind)
+    _print_tools_footer(cfg_path)
 
 
 def main() -> None:

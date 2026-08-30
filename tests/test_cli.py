@@ -79,6 +79,37 @@ def test_config_command_effective(tmp_path):
     assert "nextcloud" in result.stdout
 
 
+def test_config_tools_lists_all_kinds(tmp_path):
+    """`config tools` shows the (?)tools view for every file kind."""
+    cfgfile = tmp_path / "cfg.toml"
+    cfgfile.write_text("[scan]\n")
+    result = runner.invoke(app, ["config", "tools", "--path", str(cfgfile)])
+    assert result.exit_code == 0
+    for kind in ("audio", "image", "video", "office", "kdbx", "text", "other"):
+        assert f"file kind: {kind}" in result.stdout
+    assert "view:" in result.stdout and "edit:" in result.stdout
+    assert "configure tools in" in result.stdout
+
+
+def test_config_tools_respects_file_types_override(tmp_path):
+    """A [file_types] override changes the view tool key shown for that kind."""
+    cfgfile = tmp_path / "cfg.toml"
+    cfgfile.write_text('[file_types]\naudio = "my_audio_player"\n')
+    result = runner.invoke(app, ["config", "tools", "--path", str(cfgfile)])
+    assert result.exit_code == 0
+    assert "view: my_audio_player" in result.stdout
+
+
+def test_config_tools_accepts_global_config_flag(tmp_path):
+    """The root --config flag also feeds `config tools`."""
+    cfgfile = tmp_path / "cfg.toml"
+    cfgfile.write_text('[file_types]\nimage = "my_viewer"\n')
+    result = runner.invoke(app, ["--config", str(cfgfile), "config", "tools"])
+    assert result.exit_code == 0
+    assert "view: my_viewer" in result.stdout
+    assert "file kind: image" in result.stdout
+
+
 def test_malformed_config_warns(tmp_path):
     """A config that can't parse must warn, not silently fall back to defaults."""
     import warnings

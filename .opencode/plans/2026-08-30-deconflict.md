@@ -167,6 +167,8 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
   - This build rejects `--compare`. `(d)iff` for office now diffs the extracted text in the terminal (`_print_office_diff`), which also works headlessly. soffice `--compare` removed from `launchers._diff_cmd`.
 - [x] the "(?)tools" action should print the tools that are run for this very specific file / file type. do not list all tools, but just the ones we use here
   - `Launcher.tools_for(kind)` returns only the tool keys backing this kind's actions; `_print_tools` lists those (found/missing + hints) only.
+- [x] add `deconflict config tools` to show tools for each filetype, just as the (?) action does
+  - `config` became a Typer group: bare `config` still prints the effective config; `config tools [--path]` iterates all KINDS (audio/image/video/office/kdbx/text/other) using the SAME `_print_kind_tools` helper as the interactive (?)tools action (view/edit keys + found/missing + hints). Both honor root `--config` and `--path`. Extracted `_print_tools_footer`; fixed latent Rich markup bug where `[tools]`/`[file_types]` section names in the footer were swallowed as style tags (now escape()d — same class as the earlier `deconflict config` MarkupError).
 - [x] the (m)eld action should be more generic. so (d)iff is console diff per default (depending on file type), maybe "(m)erge" instead?
   - Dropped the meld-specific text action; `(d)iff` is now the primary inline console diff (terminal for text/office). Metadata now owns hotkey `m` (`(m)etadata`), so the generic external merge would need another key — leaving external meld out of the default text menu (terminal diff + (o)pen/(e)dit cover it).
 
