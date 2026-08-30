@@ -177,21 +177,23 @@ def config(
     else:
         console.print(f"[bold]config file:[/bold] {cfg.source}")
     console.print(escape("[scan]"))
-    console.print(f"  default_dirs = [{', '.join(str(p) for p in cfg.engine.dirs)}]")
-    console.print(f"  enabled_patterns = {cfg.engine.enabled_patterns}")
+    console.print(escape(f"  default_dirs = [{', '.join(str(p) for p in cfg.engine.dirs)}]"))
+    console.print(escape(f"  enabled_patterns = {cfg.engine.enabled_patterns}"))
     for name, base, winner in cfg.engine.custom_patterns:
-        console.print(f"  custom pattern: name={name!r} base_name={base!r} winner={winner!r}")
+        console.print(
+            escape(f"  custom pattern: name={name!r} base_name={base!r} winner={winner!r}")
+        )
     console.print(escape("[general]"))
-    console.print(f"  backup_dir = {str(cfg.engine.backup_dir)!r}")
-    console.print(f"  cache_dir = {str(cfg.engine.cache_dir)!r}")
+    console.print(escape(f"  backup_dir = {str(cfg.engine.backup_dir)!r}"))
+    console.print(escape(f"  cache_dir = {str(cfg.engine.cache_dir)!r}"))
     if cfg.tools:
         console.print(escape("[tools]"))
         for name, path_ in cfg.tools.items():
-            console.print(f"  {name} = {path_!r}")
+            console.print(escape(f"  {name} = {path_!r}"))
     if cfg.engine.file_type_tools:
         console.print(escape("[file_types]"))
         for kind, tool in cfg.engine.file_type_tools.items():
-            console.print(f"  {kind} = {tool!r}")
+            console.print(escape(f"  {kind} = {tool!r}"))
 
 
 @app.command()

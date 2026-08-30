@@ -172,6 +172,7 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 
 
 ## Open follow-ups
+- [x] Fix `deconflict config` MarkupError crash: paths/values containing `[`/`]` (e.g. `/tmp/p/deconf/`) were interpolated into Rich markup unescaped; escape() now wraps the final rendered string of every config body line. Fixed 2026-08-30: all 93 tests green, `uv run deconflict config` works. (Note: whole rendered line is escaped — escaping only the value is insufficient because our own literal `[...]` wrapper brackets then form a rich closing tag.)
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
 - Future: Textual TUI, PySide GUI.
 - Office metadata: parse docx/xlsx/ods XML (document.xml/sharedStrings/content.xml) into real per-field metadata (text runs, cell values) instead of raw truncated XML — see metadata fields item above; also lets the `(m)etadata` table show meaningful common/diff rows for office.
