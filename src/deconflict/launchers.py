@@ -3,33 +3,48 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from .media import file_kind, is_audio, is_image, is_kdbx, is_office, is_video
+from .media import file_kind, is_kdbx, is_office
 from .tools import Tools
 
 
 class ToolType(str, Enum):
-    DIFF = "diff"
-    EDITOR = "editor"
-    VIEW = "view"  # open both files in the kind's suggested app
-    VIEWER = "viewer"  # single-file open in a generic viewer
-    OFFICE = "office"
-    KEEPASS = "keepass"
+    VIEW = "view"  # open file(s) in a viewer/player/office for comparison
+    EDIT = "edit"  # open target in an editor/creator (tag editor, image editor, text editor)
+    DIFF = "diff"  # graphical/universal diff (meld for text, exiftool -diff for media)
+    VIEW_META = "view_meta"  # show the built-in metadata diff table (CLI-rendered)
+    EDIT_META = "edit_meta"  # open a metadata/tag editor (tag editor / exiftool)
 
 
-# Which [tools] key opens/edits each file kind; overridable via config [file_types].
-KIND_TOOL: dict[str, str] = {
+# Which [tools] key opens each file kind for VIEWING (config [file_types] overrides).
+KIND_VIEW_TOOL: dict[str, str] = {
     "text": "editor",
     "other": "editor",
-    "audio": "mp3_editor",
+    "audio": "audio_player",
     "image": "image_viewer",
     "video": "viewer",
     "office": "office",
     "kdbx": "keepass",
+}
+
+# Which [tools] key opens each file kind for EDITING (config [file_types_edit] overrides).
+KIND_EDIT_TOOL: dict[str, str] = {
+    "text": "editor",
+    "other": "editor",
+    "audio": "mp3_editor",  # tag editor
+    "image": "image_editor",
+    "video": "editor",
+    "office": "office",
+    "kdbx": "keepass",
+}
+
+# Kinds that support editing their metadata, and the [tools] key that edits it.
+KIND_META_EDIT_TOOL: dict[str, str] = {
+    "audio": "mp3_editor",
+    "image": "exiftool",
 }
 
 
@@ -38,59 +53,85 @@ def _launch(cmd: list[str]) -> None:
     subprocess.run(cmd, check=False)
 
 
+def _sibling(group, target: Path) -> Path | None:
+    for f in group.files:
+        if f.resolve() != target.resolve():
+            return f
+    return None
+
+
 @dataclass
 class Launcher:
     tools: Tools
-    file_type_tools: dict[str, str] = field(default_factory=dict)
+    file_type_tools: dict[str, str] = field(default_factory=dict)  # kind -> view tool key
+    file_type_edit_tools: dict[str, str] = field(default_factory=dict)  # kind -> edit tool key
 
+    # -- tool key resolution ------------------------------------------------
     def kind_tool(self, kind: str) -> str:
-        """The [tools] key that opens/edits `kind` (config override wins)."""
-        return self.file_type_tools.get(kind) or KIND_TOOL.get(kind, "editor")
+        """The [tools] key that opens/views `kind` (config override wins)."""
+        return self.file_type_tools.get(kind) or KIND_VIEW_TOOL.get(kind, "editor")
 
-    def suggested(self, path: Path) -> ToolType:
-        """The tool most appropriate for `path`'s type (menu 'suggest' hint)."""
-        if is_kdbx(path):
-            return ToolType.KEEPASS
-        if is_office(path):
-            return ToolType.OFFICE
-        if is_image(path) or is_video(path) or is_audio(path):
-            return ToolType.VIEWER
-        return ToolType.EDITOR
+    def edit_tool(self, kind: str) -> str:
+        """The [tools] key that edits `kind` (config override wins)."""
+        return self.file_type_edit_tools.get(kind) or KIND_EDIT_TOOL.get(kind, "editor")
 
+    # -- which actions are possible for a kind ------------------------------
+    def view_available(self, kind: str) -> bool:
+        return self._kind_exe(kind, self.kind_tool) is not None or (
+            self._fallback_viewer(kind) is not None
+        )
+
+    def edit_available(self, kind: str) -> bool:
+        return self._kind_exe(kind, self.edit_tool) is not None
+
+    def diff_available(self, kind: str) -> bool:
+        if kind in ("text", "other"):
+            return self.tools.get("diff") is not None
+        if kind == "office" and self.tools.get("office"):
+            return True
+        return self.tools.get("exiftool") is not None
+
+    def edit_meta_available(self, kind: str) -> bool:
+        return kind in KIND_META_EDIT_TOOL and self._kind_exe(kind, self.edit_tool) is not None
+
+    def _kind_exe(self, kind: str, resolver) -> str | None:
+        key = resolver(kind)
+        return self.tools.get(key)
+
+    def _fallback_viewer(self, kind: str) -> str | None:
+        """System-default opener when a kind has no dedicated viewer (video/audio)."""
+        if kind in ("image", "video", "audio"):
+            return self.tools.get("viewer")
+        return None
+
+    # -- command construction -----------------------------------------------
     def run(self, group, ga, tool: ToolType, target: Path) -> None:
-        if not target.exists():
-            raise FileNotFoundError(target)
+        """Run the tool(s) for `tool`. Only VIEW runs multiple detached commands; the
+        EDIT/DIFF/EDIT_META actions launch a single blocking command."""
         if tool is ToolType.VIEW:
-            self._run_view(group, target)
+            cmds = self.view_commands(group, target)
+            if not cmds:
+                raise RuntimeError("no viewer/player available for this file type")
+            for cmd in cmds:
+                _launch(cmd)
             return
         cmd = self.command(group, tool, target)
         if not cmd:
             raise RuntimeError(f"no tool configured for {tool.value}")
         _launch(cmd)
 
-    def _run_view(self, group, target: Path) -> None:
-        cmds = self.view_commands(group, target)
-        if not cmds:
-            raise RuntimeError("no viewer/editor available for this file type")
-        for cmd in cmds:
-            _launch(cmd)
-
     def view_commands(self, group, target: Path) -> list[list[str]]:
-        """Commands opening BOTH files (target + sibling) in the suggested app.
+        """Commands opening BOTH files (target + sibling) for comparison.
 
-        Editor/office tools take both paths in one command; viewers get one
-        command per file (xdg-open/open detach immediately).
+        Editor/office take both paths in one command; players/viewers get one
+        command per file (they detach or block until closed).
         """
         kind = file_kind(target)
-        tool_name = self.kind_tool(kind)
-        exe = self.tools.get(tool_name)
-        if exe is None and kind == "audio":
-            exe = self.tools.get("viewer")  # no tag editor -> system audio player
+        exe = self._kind_exe(kind, self.kind_tool) or self._fallback_viewer(kind)
         if exe is None:
             return []
-        sibling = next((f for f in group.files if f.resolve() != target.resolve()), None)
+        sibling = _sibling(group, target)
         if kind == "kdbx":
-            # keepass merge recipe: sibling (base) absorbs the copy's entries
             return [[exe, "merge", str(sibling), str(target)]] if sibling else []
         if kind in ("text", "other", "office"):
             return [[exe, str(target), str(sibling)]] if sibling else [[exe, str(target)]]
@@ -100,49 +141,61 @@ class Launcher:
         return cmds
 
     def command(self, group, tool: ToolType, target: Path) -> list[str] | None:
-        if tool is ToolType.KEEPASS:
-            return self._keepass_cmd(group, target)
         if tool is ToolType.DIFF:
-            other = next((c for c in group.files if c.resolve() != target.resolve()), None)
-            exe = self.tools.get("diff")
-            if not exe:
-                return None
-            if other is None:
-                return [exe, str(target)]
-            return [exe, str(other), str(target)]
-        if tool is ToolType.EDITOR:
-            exe = self.tools.get("editor")
-            return [exe, str(target)] if exe else None
-        if tool is ToolType.OFFICE:
-            exe = self.tools.get("office")
-            return [exe, str(target)] if exe else None
-        if tool is ToolType.VIEWER:
-            return self._viewer_cmd(target)
+            return self._diff_cmd(group, target)
+        if tool is ToolType.EDIT:
+            return self._edit_cmd(group, target)
+        if tool is ToolType.EDIT_META:
+            return self._edit_meta_cmd(group, target)
+        if tool is ToolType.VIEW:
+            first = self.view_commands(group, target)
+            return first[0] if first else None
         return None
+
+    def _diff_cmd(self, group, target: Path) -> list[str] | None:
+        """Type-aware diff: meld for text, LibreOffice compare for office, and
+        ExifTool `-diff` (universal metadata diff) for audio/image/video/office."""
+        kind = file_kind(target)
+        other = _sibling(group, target)
+        if kind in ("text", "other"):
+            exe = self.tools.get("diff")
+            if not exe or other is None:
+                return None
+            return [exe, str(other), str(target)]
+        if kind == "office":
+            exe = self.tools.get("office")
+            if exe and other is not None:  # LibreOffice two-doc compare
+                return [exe, "--compare", str(target), str(other)]
+            exe = self.tools.get("exiftool")
+            if exe and other is not None:
+                return [exe, "-diff", str(other), str(target), "--system:all", "-s", "-a"]
+            return None
+        # audio / image / video (and office meta): universal metadata diff
+        exe = self.tools.get("exiftool")
+        if not exe or other is None:
+            return None
+        return [exe, "-diff", str(other), str(target), "--system:all", "-s", "-a"]
+
+    def _edit_cmd(self, group, target: Path) -> list[str] | None:
+        kind = file_kind(target)
+        exe = self._kind_exe(kind, self.edit_tool)
+        return [exe, str(target)] if exe else None
+
+    def _edit_meta_cmd(self, group, target: Path) -> list[str] | None:
+        kind = file_kind(target)
+        key = KIND_META_EDIT_TOOL.get(kind)
+        if not key:
+            return None
+        exe = self.tools.get(key)
+        return [exe, str(target)] if exe else None
+
+    # -- retained helpers ---------------------------------------------------
+    def suggested(self, path: Path) -> ToolType:
+        """The tool most appropriate for `path`'s type (menu 'suggest' hint)."""
+        if is_kdbx(path) or is_office(path):
+            return ToolType.VIEW
+        return ToolType.EDIT if file_kind(path) in ("audio", "image") else ToolType.VIEW
 
     @staticmethod
     def _is_graphical_diff(exe: str) -> bool:
         return "meld" in exe or "WinMerge" in exe
-
-    def _viewer_cmd(self, target: Path) -> list[str] | None:
-        exe = self.tools.get("image_viewer") or self.tools.get("viewer")
-        if not exe:
-            return None
-        if exe == "start":  # windows shell keyword
-            return None
-        if sys.platform == "darwin":
-            return ["open", str(target)]
-        if sys.platform.startswith("win"):
-            return [exe, str(target)]
-        if exe == "xdg-open":
-            return [exe, str(target)]
-        return [exe, str(target)]
-
-    def _keepass_cmd(self, group, target: Path) -> list[str] | None:
-        exe = self.tools.get("keepass")
-        if not exe:
-            return None
-        other = next((c for c in group.files if c.resolve() != target.resolve()), None)
-        if other is None:
-            return None
-        return [exe, "merge", str(other), str(target)]

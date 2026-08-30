@@ -219,6 +219,47 @@ def _audio_tags(path: Path) -> dict[str, str]:
     return out
 
 
+def metadata_fields(path: Path, kind: str, tools: dict[str, str] | None = None) -> dict[str, str]:
+    """Return `path`'s metadata as an ordered dict of field→value ({} when unsupported).
+
+    Fields are produced so callers can diff common / differing fields between a base
+    and a copy. Audio → per-tag dict; image → dims + EXIF tags; video → stream summary;
+    office → the extracted text as one `content` field.
+    """
+    tools = tools or {}
+    try:
+        if kind == "audio":
+            return _audio_tags(path)
+        if kind == "image":
+            return _image_fields(path)
+        if kind == "video":
+            return {"streams": video_summary(path, tools.get("video_probe"))}
+        if kind == "office":
+            return {"content": office_summary(path)}
+    except Exception:
+        pass
+    return {}
+
+
+def _image_fields(path: Path) -> dict[str, str]:
+    """Image metadata as a dict: dimensions plus best-effort EXIF tags."""
+    from PIL import Image
+    from PIL.ExifTags import TAGS
+
+    fields: dict[str, str] = {}
+    with Image.open(path) as im:
+        fields["dimensions"] = f"{im.width}x{im.height}"
+        fmt = im.format or "unknown"
+        fields["format"] = fmt
+        exif = im.getexif()
+        for k, v in exif.items():
+            label = TAGS.get(k, f"tag{k}")
+            if isinstance(v, bytes):
+                v = v.decode("latin-1", errors="replace")
+            fields[str(label)] = str(v)
+    return fields
+
+
 def metadata_equal(a: Path, b: Path, kind: str, tools: dict[str, str] | None = None) -> bool | None:
     """True when both files carry identical metadata; None when not a media kind."""
     if kind not in _META_KINDS:

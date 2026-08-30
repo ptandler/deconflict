@@ -213,13 +213,15 @@ def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch):
 
 
 def test_interactive_table_has_flags(sample_dir, tmp_path, monkeypatch):
-    """The group table shows vs-base and metadata columns."""
+    """The group table shows #-role, size(+delta), mtime, and metadata (no suggest)."""
     import deconflict.config as config_mod
 
     monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
     result = runner.invoke(app, [], input="q\n")
-    assert "vs base" in result.stdout
+    assert "mtime" in result.stdout
     assert "metadata" in result.stdout
+    assert "suggest" not in result.stdout
+    assert "vs base" not in result.stdout
 
 
 def test_bare_no_dirs_explains(tmp_path, monkeypatch):
@@ -231,3 +233,41 @@ def test_bare_no_dirs_explains(tmp_path, monkeypatch):
     assert result.exit_code == 2
     assert "no directories" in result.stdout
     assert "init-config" in result.stdout
+
+
+def test_interactive_metadata_menu_option(sample_dir, tmp_path, monkeypatch):
+    """First group is the mp3 (metadata differs) so (m)etadata shows a base/copy table."""
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    result = runner.invoke(app, [], input="m\n" + "s\n" * 10)
+    assert result.exit_code == 0
+    assert "(m)etadata" in result.stdout
+    assert "metadata diff" in result.stdout
+    # common + diff fields both appear as table rows
+    assert "artist" in result.stdout
+    assert "title" in result.stdout
+
+
+def test_truncate_meta():
+    from deconflict.cli import _truncate_meta
+
+    short = "hello"
+    assert _truncate_meta(short) == short
+    long = "x" * 100
+    out = _truncate_meta(long)
+    assert len(out) < len(long)
+    assert "+" in out and "more" in out
+    assert _truncate_meta(None) == "∅"
+
+
+def test_interactive_office_metadata_cell_truncated(sample_dir, tmp_path, monkeypatch):
+    """An office copy's metadata cell shows truncated content, not raw XML."""
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    # reach the xlsx group (group 3): skip 2, then 'm' metadata? no — check overview cell:
+    result = runner.invoke(app, [], input="s\ns\ns\ns\ns\ns\nq\n")
+    assert result.exit_code == 0
+    assert "content:" in result.stdout
+    assert "+" in result.stdout and "more" in result.stdout

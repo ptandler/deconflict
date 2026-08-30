@@ -70,6 +70,7 @@ def _from_dict(raw: dict) -> Config:
         backup_dir=gen.get("backup_dir", "~/deconflict-backups"),
         cache_dir=gen.get("cache_dir", "~/.cache/deconflict"),
         file_type_tools=dict(raw.get("file_types", {})),
+        file_type_edit_tools=dict(raw.get("file_types_edit", {})),
     )
     return Config(engine=engine, tools=dict(raw.get("tools", {})))
 

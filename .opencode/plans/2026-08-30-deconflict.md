@@ -133,6 +133,7 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 - [ ] improve metadata for office documents. could it be that it currently takes the plain xml?
 - [ ] is there a char-based diff, e.g. highlight the changes within a line?
 - [ ] the final message of resolve still says "resolved x groups, even if some where skipped and not resolved
+- [ ] **tool-actions matrix (IN PROGRESS)**: separate `(v)iew` from `(e)dit` per kind; audio `(v)iew` → audio player; add `(x)edit-meta`; universal meta-diff via ExifTool `-diff`; per-kind diff defaults (meld text / soffice --compare office / exiftool -diff media); default `mp3_editor` → GUI (kid3/easytag/picard) not kid3-cli. Includes launchers.py ToolTypes (VIEW/EDIT/DIFF/VIEW_META/EDIT_META), KIND_*TOOL tables, config `[file_types_edit]`, cli menu via `_actions`, rejected-tag-default choice, tests.
 
 ## Open follow-ups
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.

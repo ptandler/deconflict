@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from deconflict.engine import Action, ActionKind, Engine, EngineConfig
+from deconflict.tools import Tools
 
 
 def _engine(sample_dir, tmp_path, **kw) -> Engine:
@@ -13,6 +14,16 @@ def _engine(sample_dir, tmp_path, **kw) -> Engine:
         **kw,
     )
     return Engine(cfg)
+
+
+def _engine_with(sample_dir, tmp_path, tools: dict[str, str], **kw) -> Engine:
+    cfg = EngineConfig(
+        dirs=[sample_dir],
+        backup_dir=str(tmp_path / "backup"),
+        cache_dir=str(tmp_path / "cache"),
+        **kw,
+    )
+    return Engine(cfg, tools=Tools(tools))
 
 
 def test_scan_returns_groups(sample_dir, tmp_path):
@@ -64,16 +75,29 @@ def test_factory_actions():
 def test_supported_tools_per_kind(sample_dir, tmp_path):
     from deconflict.launchers import ToolType
 
-    engine = _engine(sample_dir, tmp_path)
+    tools = {
+        "editor": "/usr/bin/vi",
+        "diff": "/usr/bin/meld",
+        "audio_player": "/usr/bin/mpv",
+        "mp3_editor": "/usr/bin/kid3",
+        "exiftool": "/usr/bin/exiftool",
+    }
+    engine = _engine_with(sample_dir, tmp_path, tools)
     result = engine.scan()
     analyzed = engine.analyze(result)
 
     readme = next(ga for g, ga in analyzed if g.base and g.base.name == "Readme.md")
-    assert engine.supported_tools(readme) == [ToolType.EDITOR, ToolType.DIFF]
+    assert engine.supported_tools(readme) == [ToolType.VIEW, ToolType.DIFF]
 
     mp3_name = "Fröhlicher Kreis - Track12 Scottish Circassian, Irish Washerwoman, My Old Man.mp3"
     mp3 = next(ga for g, ga in analyzed if g.base and g.base.name == mp3_name)
-    assert engine.supported_tools(mp3) == [ToolType.VIEWER]
+    assert set(engine.supported_tools(mp3)) == {
+        ToolType.VIEW,
+        ToolType.EDIT,
+        ToolType.DIFF,
+        ToolType.VIEW_META,
+        ToolType.EDIT_META,
+    }
 
 
 def test_view_commands_text_opens_both(sample_dir, tmp_path):
@@ -96,4 +120,4 @@ def test_kind_tool_override_wins(sample_dir, tmp_path):
 
     launcher = Launcher(Tools({}), file_type_tools={"image": "eog"})
     assert launcher.kind_tool("image") == "eog"
-    assert launcher.kind_tool("audio") == "mp3_editor"  # default unaffected
+    assert launcher.kind_tool("audio") == "audio_player"  # default unaffected

@@ -94,3 +94,25 @@ def test_metadata_diff_mentions_tags(sample_dir):
 def test_metadata_diff_none_for_text(sample_dir):
     base, copy = _pair(sample_dir, "Readme.md")
     assert media.metadata_diff(base, copy, "text") is None
+
+
+def test_metadata_fields_audio(sample_dir):
+    base, copy = _pair(sample_dir, MP3)
+    bf = media.metadata_fields(base, "audio")
+    cf = media.metadata_fields(copy, "audio")
+    assert isinstance(bf, dict) and bf  # at least one extractable tag
+    assert isinstance(cf, dict) and cf
+    # some field must differ (real tag-only diff) for the menu to make sense
+    assert any(bf.get(k) != cf.get(k) for k in dict.fromkeys([*bf, *cf]))
+
+
+def test_metadata_fields_image_has_dims_and_format(sample_dir):
+    base, _copy = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
+    fields = media.metadata_fields(base, "image")
+    assert fields.get("dimensions") is not None
+    assert fields.get("format") is not None
+
+
+def test_metadata_fields_empty_for_unsupported(sample_dir):
+    base, copy = _pair(sample_dir, "Readme.md")
+    assert media.metadata_fields(base, "text") == {}

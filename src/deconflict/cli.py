@@ -16,6 +16,7 @@ from .cache import clean_cache
 from .config import Config, load, write_init_config
 from .engine import Action, ActionKind, Engine
 from .launchers import ToolType
+from .media import metadata_fields
 from .patterns import build_patterns
 from .scan import ConflictGroup
 
@@ -71,6 +72,35 @@ def _human(n: int) -> str:
 
 def _fmt_mtime(t: float) -> str:
     return datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M")
+
+
+def _size_cell(ga: GroupAnalysis, a, idx) -> str:
+    """Size, with the copy's delta vs base shown in parentheses (base has none)."""
+    size = f"{_human(a.info.size)}"
+    if idx is None:
+        return size
+    delta = a.info.size - ga.base.info.size if ga.base else 0
+    if ga.base and a.info.sha == ga.base.info.sha:
+        return f"{size} [dim](=)[/dim]"
+    if ga.base is None:
+        arrow = "↑" if delta > 0 else "↓" if delta < 0 else "="
+        return f"{size} [dim]({arrow})[/dim]"
+    arrow = "↑" if delta > 0 else "↓" if delta < 0 else "≠"
+    bit = f" {_human(abs(delta))}" if delta else ""
+    return f"{size} [yellow]({arrow}{bit})[/yellow]"
+
+
+_META_CELL_MAX = 70  # cap per-metadata-value length in on-screen tables
+
+
+def _truncate_meta(value: str, limit: int = _META_CELL_MAX) -> str:
+    """Shorten a long metadata value (e.g. office XML) for a table cell."""
+    if value is None:
+        return "∅"
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"… (+{len(text) - limit} more)"
 
 
 @app.callback()
@@ -266,7 +296,7 @@ def _run_interactive(engine: Engine, groups) -> None:
                         "[yellow]no viewer/editor found for this type — see (?)tools[/yellow]"
                     )
                     continue
-                engine.launch_tool(group, ga, action.tool or ToolType.EDITOR, action.target)
+                engine.launch_tool(group, ga, action.tool or ToolType.VIEW, action.target)
                 if action.tool is ToolType.VIEW:
                     console.print("[dim]press [bold]Enter[/bold] when done reviewing[/dim]")
                     input()
@@ -298,11 +328,11 @@ def _show_group(
     console.print()
     title = group.base.name if group.base else group.key
     table = Table(title=f"[bold]Group {i}/{total}[/bold] — {title}")
+    table.add_column("#")
     table.add_column("file", style="cyan")
     table.add_column("size")
-    table.add_column("vs base")
+    table.add_column("mtime")
     table.add_column("metadata")
-    table.add_column("suggest")
     rows: list[tuple] = ([(ga.base, None)] if ga.base else []) + [
         (c, i) for i, c in enumerate(ga.copies)
     ]
@@ -310,27 +340,27 @@ def _show_group(
         if a is None:
             continue
         if idx is None:  # base row
-            vs = "[dim]base[/dim]"
+            num = "[bold]#0[/bold]"
             meta = "[dim]—[/dim]"
         else:
-            delta = a.info.size - ga.base.info.size if ga.base else 0
-            if ga.base and a.info.sha == ga.base.info.sha:
-                vs = "[dim]=[/dim]"
-            elif ga.base is None:
-                vs = f"[dim]{'↑' if delta > 0 else '↓' if delta < 0 else '='}[/dim]"
-            else:
-                arrow = "↑" if delta > 0 else "↓" if delta < 0 else "≠"
-                size_bit = f" {_human(abs(delta))}" if delta else ""
-                vs = f"[yellow]≠ {arrow}{size_bit}[/yellow]"
+            num = f"[bold]#{idx + 1}[/bold]"
             md = ga.meta[idx] if idx < len(ga.meta) else None
             if md is None:
                 meta = "[dim]—[/dim]"
             elif md is True:
                 meta = "[green]same[/green]"
             else:
-                detail = (ga.meta_diff[idx] if idx < len(ga.meta_diff) else None) or ""
-                meta = "[yellow]diff[/yellow]" + (f" ({detail})" if detail else "")
-        table.add_row(a.path.name, _human(a.info.size), vs, meta, engine.suggest(a.path).value)
+                differ = _differing_fields(engine, ga, idx)
+                meta = "[yellow]diff[/yellow]"
+                if differ:
+                    meta += "\n" + "\n".join(f"[dim]{d}[/dim]" for d in differ)
+        table.add_row(
+            num,
+            a.path.name,
+            _size_cell(ga, a, idx),
+            _fmt_mtime(a.info.mtime),
+            meta,
+        )
     console.print(table)
     if ga.all_equal:
         console.print("[dim]copies identical in content[/dim]")
@@ -346,23 +376,84 @@ def _show_group(
                 console.print(f"[yellow]  {c.path.name}: {detail}[/yellow]")
 
 
+def _actions(engine: Engine, ga: GroupAnalysis) -> list[tuple[str, str, ToolType | str]]:
+    """Ordered (hotkey, label, ToolType | inline-tag) tool actions for this kind.
+
+    A ToolType means 'launch an external tool'; an inline-tag ('term_diff',
+    'meta_view') means the action is handled directly in the prompt loop.
+    """
+    k = ga.kind
+    a: list[tuple[str, str, ToolType | str]] = []
+    la = engine.launcher()
+    if k in ("text", "other"):
+        if la.view_available(k):
+            a.append(("v", "view", ToolType.VIEW))
+        if k == "text":
+            a.append(("d", "diff", "term_diff"))
+        if engine.available_edit(ga) and k == "text":
+            a.append(("e", "edit", ToolType.EDIT))
+        if k == "text" and engine.available_diff(ga):
+            a.append(("m", "meld", ToolType.DIFF))
+    elif k == "audio":
+        if la.view_available(k):
+            a.append(("v", "listen", ToolType.VIEW))
+        if engine.available_edit(ga):
+            a.append(("e", "edit tags", ToolType.EDIT))
+        if engine.available_diff(ga):
+            a.append(("d", "meta-diff", ToolType.DIFF))
+    elif k == "image":
+        if la.view_available(k):
+            a.append(("v", "view", ToolType.VIEW))
+        if engine.available_edit(ga):
+            a.append(("e", "edit", ToolType.EDIT))
+        if engine.available_diff(ga):
+            a.append(("d", "meta-diff", ToolType.DIFF))
+        if engine.available_edit_meta(ga):
+            a.append(("x", "edit exif", ToolType.EDIT_META))
+    elif k == "video":
+        if la.view_available(k):
+            a.append(("v", "play", ToolType.VIEW))
+        if engine.available_diff(ga):
+            a.append(("d", "meta-diff", ToolType.DIFF))
+    elif k == "office":
+        if la.view_available(k):
+            a.append(("v", "open", ToolType.VIEW))
+        if engine.available_edit(ga):
+            a.append(("e", "edit", ToolType.EDIT))
+        if engine.available_diff(ga):
+            a.append(("d", "diff", ToolType.DIFF))
+    elif k == "kdbx":
+        a.append(("v", "merge", ToolType.VIEW))
+    if k == "text":
+        pass
+    elif _meta_differs(ga):
+        a.append(("m", "metadata", "meta_view"))
+    return a
+
+
 def _prompt(engine: Engine, group: ConflictGroup, ga: GroupAnalysis) -> Action | None:
     target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
+    bykey: dict[str, tuple[str, ToolType | str]] = {
+        key: (label, tool) for key, label, tool in _actions(engine, ga)
+    }
     while True:
-        ans = input(_menu_text(ga)).strip().lower()
-        if ans in ("b", "base"):
-            return Action.keep_base()
-        if ans in ("c", "copy"):
-            return Action.keep_copy(target) if target else Action.skip()
-        if ans in ("v", "view"):
-            return Action.tool_action(ToolType.VIEW, target) if target else None
-        if ans in ("d", "diff") and ga.kind in ("text", "other"):
-            _print_text_diff(group, target)
+        ans = input(_menu_text(engine, ga)).strip().lower()
+        if ans.isdigit():
+            action = _keep_by_number(ga, int(ans))
+            if action is not None:
+                return action
+            print("invalid choice")
             continue
-        if ans in ("m", "meld") and ga.kind == "text":
-            return Action.tool_action(ToolType.DIFF, target) if target else None
-        if ans in ("e", "editor") and ga.kind in ("text", "other"):
-            return Action.tool_action(ToolType.EDITOR, target) if target else None
+        if ans in bykey:
+            label, tool = bykey[ans]
+            if isinstance(tool, ToolType):
+                return Action.tool_action(tool, target) if target else None
+            if tool == "term_diff":
+                _print_text_diff(group, target)
+                continue
+            if tool == "meta_view":
+                _print_metadata_diff(engine, ga, 0)
+                continue
         if ans in ("h", "keep-both"):
             return Action.keep_both()
         if ans in ("s", "skip"):
@@ -375,12 +466,20 @@ def _prompt(engine: Engine, group: ConflictGroup, ga: GroupAnalysis) -> Action |
         print("invalid choice")
 
 
-def _menu_text(ga: GroupAnalysis) -> str:
-    parts = ["(b)ase", "(c)opy", "(v)iew"]
-    if ga.kind in ("text", "other"):
-        parts += ["(d)iff", "(e)ditor"] if ga.kind == "text" else ["(e)ditor"]
-    if ga.kind == "text":
-        parts += ["(m)eld"]
+def _keep_by_number(ga: GroupAnalysis, idx: int) -> Action | None:
+    """Map a menu number to a keep action: #0 = base, #1..N = copies. None when invalid."""
+    if idx == 0 and ga.base is not None:
+        return Action.keep_base()
+    if 1 <= idx <= len(ga.copies):
+        return Action.keep_copy(ga.copies[idx - 1].path)
+    return None
+
+
+def _menu_text(engine: Engine, ga: GroupAnalysis) -> str:
+    parts = ["(0) keep base"] if ga.base else []
+    for n, _c in enumerate(ga.copies, 1):
+        parts.append(f"({n}) keep copy #{n}")
+    parts += [f"({key}){label}" for key, label, _tool in _actions(engine, ga)]
     parts += ["(h)keep-both", "(s)kip", "(q)uit", "(?)tools"]
     return " ".join(parts) + ": "
 
@@ -411,6 +510,78 @@ def _print_text_diff(group: ConflictGroup, target: Path | None) -> None:
         else:
             color = "dim"
         console.print(f"[{color}]{escape(line)}[/{color}]")
+
+
+def _meta_differs(ga: GroupAnalysis) -> bool:
+    """True when any copy's metadata differs from the base (media kinds)."""
+    return ga.base is not None and any(m is False for m in ga.meta)
+
+
+FieldDicts = tuple[dict[str, str], dict[str, str]]
+
+
+def _diff_fields(engine: Engine, ga: GroupAnalysis, idx: int) -> FieldDicts:
+    """Metadata field dicts for (base, copy) at `idx` ({} when not extractable)."""
+    if ga.base is None or idx >= len(ga.copies):
+        return {}, {}
+    bf = metadata_fields(ga.base.path, ga.kind, engine.tools.found)
+    cf = metadata_fields(ga.copies[idx].path, ga.kind, engine.tools.found)
+    return bf, cf
+
+
+def _differing_fields(engine: Engine, ga: GroupAnalysis, idx: int) -> list[str]:
+    """Short `field: value` lines for the copy's fields that differ from the base."""
+    bf, cf = _diff_fields(engine, ga, idx)
+    return [
+        f"{k}: {_truncate_meta(cf.get(k, '∅'))}"
+        for k in dict.fromkeys([*bf, *cf])
+        if bf.get(k) != cf.get(k)
+    ]
+
+
+def _meta_diff_columns(ga: GroupAnalysis, idx: int, limit: int = 40) -> tuple[str, str]:
+    """Short header labels for the metadata table: `#N <truncated-filename>`."""
+    name = lambda p: p if len(p) <= limit else p[: limit - 1] + "…"  # noqa: E731
+    base = f"#0 {name(ga.base.path.name)}" if ga.base else "#0"
+    copy = f"#{idx + 1} {name(ga.copies[idx].path.name)}" if idx < len(ga.copies) else f"#{idx + 1}"
+    return base, copy
+
+
+def _print_metadata_diff(engine: Engine, ga: GroupAnalysis, idx: int) -> None:
+    """A table with base and copy as columns; common and differing fields as rows."""
+    if not _meta_differs(ga):
+        console.print("[yellow]no metadata difference to show[/yellow]")
+        return
+    if idx >= len(ga.copies) or ga.base is None:
+        console.print("[yellow]nothing to compare[/yellow]")
+        return
+    bf, cf = _diff_fields(engine, ga, idx)
+    if not bf and not cf:
+        console.print("[yellow]no extractable metadata[/yellow]")
+        return
+    base_label, copy_label = _meta_diff_columns(ga, idx)
+    keys = list(dict.fromkeys([*bf, *cf]))
+    common = [k for k in keys if bf.get(k) == cf.get(k)]
+    diff = [k for k in keys if bf.get(k) != cf.get(k)]
+    table = Table(title="metadata diff", header_style="bold")
+    table.add_column("field")
+    table.add_column(base_label, overflow="ellipsis")
+    table.add_column(copy_label, overflow="ellipsis")
+    for k in common:
+        table.add_row(
+            k, escape(_truncate_meta(bf.get(k))), escape(_truncate_meta(cf.get(k))), style="dim"
+        )
+    if common and diff:
+        table.add_section()
+    for k in diff:
+        table.add_row(
+            k,
+            escape(_truncate_meta(bf.get(k, "∅"))),
+            escape(_truncate_meta(cf.get(k, "∅"))),
+        )
+    console.print(table)
+    if diff:
+        console.print("[dim]differing rows shown in plain; shared fields dimmed[/dim]")
 
 
 def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:

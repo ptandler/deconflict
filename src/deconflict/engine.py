@@ -69,19 +69,21 @@ class EngineConfig:
     cache_dir: str | Path = "~/.cache/deconflict"
     dry_run: bool = False
     follow_symlinks: bool = False
-    file_type_tools: dict[str, str] = field(default_factory=dict)  # kind -> [tools] key
+    file_type_tools: dict[str, str] = field(default_factory=dict)  # kind -> [tools] view key
+    file_type_edit_tools: dict[str, str] = field(default_factory=dict)  # kind -> [tools] edit key
 
 
 @dataclass
 class Engine:
     cfg: EngineConfig
+    tools: Tools | None = None  # inject for hermetic tests; else auto-detect
 
     def __post_init__(self) -> None:
         self.patterns = build_patterns(self.cfg.enabled_patterns, self.cfg.custom_patterns)
         self.resolver = Resolver(
             Path(str(self.cfg.backup_dir)).expanduser(), dry_run=self.cfg.dry_run
         )
-        self.tools: Tools = detect()
+        self.tools: Tools = self.tools or detect()
         self.cache: FileCache | None = None
         if self.cfg.cache_dir and self.cfg.dirs:
             self.cache = FileCache(self.cfg.cache_dir, cache_key(self.cfg.dirs))
@@ -167,7 +169,7 @@ class Engine:
         return group.base.name if group.base else group.key
 
     def launcher(self) -> Launcher:
-        return Launcher(self.tools, self.cfg.file_type_tools)
+        return Launcher(self.tools, self.cfg.file_type_tools, self.cfg.file_type_edit_tools)
 
     def launch_tool(
         self, group: ConflictGroup, ga: GroupAnalysis, tool: ToolType, target: Path
@@ -179,18 +181,31 @@ class Engine:
         """The tool a frontend should suggest for `path`, based on its type."""
         return self.launcher().suggested(path)
 
+    def available_view(self, ga: GroupAnalysis) -> bool:
+        return self.launcher().view_available(ga.kind)
+
+    def available_edit(self, ga: GroupAnalysis) -> bool:
+        return self.launcher().edit_available(ga.kind)
+
+    def available_diff(self, ga: GroupAnalysis) -> bool:
+        return self.launcher().diff_available(ga.kind)
+
+    def available_edit_meta(self, ga: GroupAnalysis) -> bool:
+        return self.launcher().edit_meta_available(ga.kind)
+
     def supported_tools(self, ga: GroupAnalysis) -> list[ToolType]:
         """Tool-action letters available for this group's file kind."""
         kind = ga.kind
-        if kind == "kdbx":
-            return [ToolType.KEEPASS]
-        if kind == "office":
-            return [ToolType.OFFICE]
-        if kind in ("audio", "image", "video"):
-            return [ToolType.VIEWER]
-        if kind == "other":
-            return [ToolType.EDITOR]
-        return [ToolType.EDITOR, ToolType.DIFF]
+        tools: list[ToolType] = [ToolType.VIEW]
+        if self.available_edit(ga) and kind not in ("text", "other", "office", "kdbx"):
+            tools.append(ToolType.EDIT)
+        if self.available_diff(ga):
+            tools.append(ToolType.DIFF)
+        if kind in ("audio", "image", "video", "office") and _meta_capable(ga):
+            tools.append(ToolType.VIEW_META)
+        if self.available_edit_meta(ga):
+            tools.append(ToolType.EDIT_META)
+        return tools
 
     def tool_status(self) -> list[tuple[str, str | None, list[str], str | None]]:
         """(name, found-path, candidates, install-hint) for every configured tool."""
@@ -202,3 +217,8 @@ class Engine:
 
 def path_of(a) -> Path:
     return a.path
+
+
+def _meta_capable(ga: GroupAnalysis) -> bool:
+    """True when a media group actually has metadata differences to show."""
+    return ga.base is not None and any(m is False for m in ga.meta)
