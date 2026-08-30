@@ -1,0 +1,15 @@
+[tools]
+python = "3.13"
+uv = "latest"
+
+[tasks.check]
+description = "Lint + format-check + tests (CI does the same)"
+run = ["uv run ruff check .", "uv run ruff format --check .", "uv run pytest"]
+
+[tasks.devenv]
+description = "Install editable into global uv PATH for local testing"
+run = "uv tool install --editable ."
+
+[tasks.install]
+description = "Install into global uv PATH"
+run = "uv tool install ."

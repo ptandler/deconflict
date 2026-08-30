@@ -1,0 +1,4 @@
+[scan]
+default_dirs = ["/tmp/opencode/dc_test/sample files"]
+[general]
+cache_dir = "/tmp/opencode/dc_test/cache"
