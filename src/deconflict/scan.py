@@ -87,10 +87,18 @@ def scan(
     dirs: Iterable[Path],
     patterns: list[Pattern],
     follow_symlinks: bool = False,
+    on_file=None,
 ) -> ScanResult:
-    """Scan multiple directories and group found conflict files."""
+    """Scan multiple directories and group found conflict files.
+
+    `on_file` (optional) is called once per emitted file path so a UI can show
+    scan progress.
+    """
     dir_list = list(dict.fromkeys(Path(d).expanduser() for d in dirs))
     files: list[Path] = []
     for d in dir_list:
-        files.extend(iter_files(d, follow_symlinks))
+        for p in iter_files(d, follow_symlinks):
+            if on_file is not None:
+                on_file(p)
+            files.append(p)
     return ScanResult(dir_list, group_conflicts(files, patterns))

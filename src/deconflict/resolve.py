@@ -135,6 +135,36 @@ class Resolver:
         copy.rename(base)
         return Resolved("rename", moved_to=base)
 
+    def keep_both(
+        self,
+        group_key: str,
+        base: Path | None,
+        conflicts: list[Path],
+        log: Path,
+    ) -> list[Resolved]:
+        """Keep the base AND every conflict copy by renaming each copy to a plain,
+        non-conflict name beside the base (so it stops matching the pattern).
+
+        This is non-destructive: nothing is moved to backup and the base is never
+        touched. Copied contents remain next to the original under a disambiguated
+        name, e.g. `report (copy 1).docx`.
+        """
+        if base is None:
+            return []
+        out: list[Resolved] = []
+        for i, c in enumerate(conflicts, 1):
+            target = base.with_name(f"{base.stem} (copy {i}){base.suffix}")
+            if c.resolve() == target.resolve():
+                continue
+            if self.dry_run:
+                out.append(Resolved("rename", moved_to=target, detail="(dry-run) would rename"))
+                continue
+            target = _unique_target(base.parent, target)
+            c.rename(target)
+            out.append(Resolved("rename", moved_to=target))
+        self._log(log, group_key, "keep_both", base=base, decisions=out)
+        return out
+
     def _log(self, log: Path, key: str, action: str, **kw) -> None:
         if self.dry_run:
             return

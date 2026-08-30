@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .media import file_kind, metadata_diff, metadata_equal
+from .media import file_kind, metadata_diff, metadata_equal, metadata_fields
 
 CHUNK = 1 << 16
 _TEXT_MAGIC_LEN = 8192
@@ -62,8 +62,10 @@ class GroupAnalysis:
     sizes: dict[str, int]
     hashes: dict[str, str]
     kind: str = "text"
-    meta: list[bool | None] = field(default_factory=list)  # per copy vs base
+    meta: list[bool | None] = field(default_factory=list)  # per copy vs base (content metadata)
     meta_diff: list[str | None] = field(default_factory=list)  # per copy vs base
+    # Full metadata field dicts (fs attrs + content) aligned with rows ([base]? + copies).
+    meta_fields: list[dict[str, str]] = field(default_factory=list)
 
     def winner_hint(self) -> str | None:
         """'base' or a copy path if one file is clearly newest by mtime."""
@@ -107,8 +109,11 @@ def analyze_group(
     kind = file_kind(first.path, first.info.is_text) if first else "text"
     meta: list[bool | None] = [None] * len(copies)
     meta_diff: list[str | None] = [None] * len(copies)
-    if base_a is not None and kind in ("audio", "image", "video", "office"):
+    meta_fields: list[dict[str, str]] = [metadata_fields(a.path, kind, tools) for a in analyses]
+    if base_a is not None:
         for i, c in enumerate(copies):
             meta[i] = metadata_equal(base, c.path, kind, tools)
             meta_diff[i] = metadata_diff(base, c.path, kind, tools)
-    return GroupAnalysis(base_a, copies, all_equal, all_text, sizes, hashes, kind, meta, meta_diff)
+    return GroupAnalysis(
+        base_a, copies, all_equal, all_text, sizes, hashes, kind, meta, meta_diff, meta_fields
+    )

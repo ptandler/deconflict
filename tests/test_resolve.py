@@ -98,6 +98,28 @@ def test_backup_path_collision_dedups(tmp_path):
     assert res.moved_to != (tmp_path / "backup" / "g" / "a.txt")
 
 
+def test_keep_both_renames_copies_to_non_conflict_names(sample_dir, tmp_path):
+    """item: (h)keep-both keeps base + every copy by renaming copies to plain,
+    non-pattern names in place (nothing moved to backup, base untouched)."""
+    resolver = _resolver(tmp_path)
+    g = _readme_group(sample_dir)
+    original_base = g.base.read_bytes()
+    copy_contents = [c.read_bytes() for c in g.conflicts]
+    res = resolver.keep_both(g.key, g.base, g.conflicts, tmp_path / "log.jsonl")
+    # base untouched, still in place
+    assert g.base.exists() and g.base.read_bytes() == original_base
+    # one rename per copy, in order, to a non-conflict `<base> (copy N).ext` name
+    assert len(res) == len(g.conflicts)
+    for i, (r, content) in enumerate(zip(res, copy_contents, strict=True), 1):
+        assert r.action == "rename"
+        assert r.moved_to is not None
+        assert r.moved_to.name == f"Readme (copy {i}).md"
+        assert r.moved_to.exists() and r.moved_to.read_bytes() == content
+    # nothing left matching the conflicted-copy pattern in the scan dir
+    assert not g.conflicts[0].exists()
+    assert not list(sample_dir.glob("* conflicted copy *"))
+
+
 def test_long_name_collision_stays_within_name_limit(tmp_path):
     """Long filenames + collision must dedup without hitting ENAMETOOLONG."""
     long = "x" * 250

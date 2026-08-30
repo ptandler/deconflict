@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from deconflict import media
 from deconflict.patterns import build_patterns
 from deconflict.scan import scan
@@ -113,6 +115,121 @@ def test_metadata_fields_image_has_dims_and_format(sample_dir):
     assert fields.get("format") is not None
 
 
-def test_metadata_fields_empty_for_unsupported(sample_dir):
+def test_metadata_fields_generic_attrs_for_unsupported(sample_dir):
+    """Even kinds without content metadata (text/other) get the generic file attrs,
+    so (m)etadata is always available (size/created/modified)."""
     base, copy = _pair(sample_dir, "Readme.md")
-    assert media.metadata_fields(base, "text") == {}
+    fields = media.metadata_fields(base, "text")
+    assert set(fields) == set(media.META_ATTR_FIELDS)
+    assert fields.get("size") is not None
+
+
+def test_metadata_equal_and_diff_share_extraction_for_images(sample_dir):
+    """item: overview must not say 'metadata same' while the diff shows differences —
+    both derive from the same `_content_fields` extractor."""
+    base, copy = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
+    bf = media._content_fields(base, "image", {})
+    cf = media._content_fields(copy, "image", {})
+    equal = all(bf.get(k) == cf.get(k) for k in dict.fromkeys([*bf, *cf]))
+    assert equal == media.metadata_equal(base, copy, "image")
+
+
+def test_office_metadata_has_core_props_and_clean_text(sample_dir):
+    """item: office metadata should be real fields (core props + cleaned text), not raw XML."""
+    base, _copy = _pair(sample_dir, "Vorlage_Transkription.docx")
+    fields = media.metadata_fields(base, "office")
+    assert "title" in fields and "creator" in fields
+    assert "last_modified_by" in fields
+    content = fields.get("content", "")
+    # cleaned text: readable words, no XML markup angle-brackets
+    assert "<" not in content and ">" not in content
+    assert content.strip()
+
+
+def test_metadata_fields_include_generic_attrs(sample_dir):
+    """item: the metadata table always shows size + created + modified, even for media."""
+    base, _copy = _pair(sample_dir, MP3)
+    fields = media.metadata_fields(base, "audio")
+    for attr in media.META_ATTR_FIELDS:
+        assert fields.get(attr) is not None
+    # content tags still present alongside the generic attrs
+    assert any(k not in media.META_ATTR_FIELDS for k in fields)
+
+
+class _FakeProc:
+    def __init__(self, returncode: int, stdout: str):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+_FAKE_EXIF = """[{
+  "SourceFile": "a.mp3",
+  "ExifToolVersion": 13.55,
+  "FileName": "a.mp3",
+  "FileSize": "3.6 MB",
+  "MIMEType": "audio/mpeg",
+  "MPEGAudioVersion": 1,
+  "SampleRate": 44100,
+  "CopyrightFlag": false,
+  "Title": "A Song",
+  "Artist": "Someone",
+  "Genre": "Volkstanz",
+  "Comment": "",
+  "Track": 12
+}]"""
+
+
+def test_exiftool_fields_parses_and_normalizes(monkeypatch):
+    """item: exiftool enriches audio/image metadata; noise is skipped, acronym keys
+    normalized (MIMEType->mimeType, MPEGAudioVersion->mpegAudioVersion), empty and
+    file-system fields excluded. Mocked subprocess keeps the test fast/deterministic."""
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: _FakeProc(0, _FAKE_EXIF))
+    fields = media._exiftool_fields(Path("a.mp3"), "/usr/bin/exiftool")
+    assert fields is not None
+    # normalized acronym keys
+    assert fields.get("mimeType") == "audio/mpeg"
+    assert fields.get("mpegAudioVersion") == "1"
+    # scalar/string tags present
+    assert fields.get("title") == "A Song"
+    assert fields.get("artist") == "Someone"
+    assert fields.get("genre") == "Volkstanz"
+    assert fields.get("track") == "12"
+    assert fields.get("copyrightFlag") == "false"
+    # noise + empty values excluded
+    for noisy in ("SourceFile", "FileName", "FileSize", "ExifToolVersion", "comment"):
+        assert noisy not in fields
+
+
+def test_exiftool_fields_dims_merged_for_image(monkeypatch):
+    """ImageWidth/Height are folded into a single `dimensions` field for images."""
+    exif = """[{"ImageWidth": 1200, "ImageHeight": 1600, "FileType": "JPEG",
+                "ImageSize": "1200x1600", "Megapixels": 1.9, "JFIFVersion": "1.02"}]"""
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: _FakeProc(0, exif))
+    fields = media._exiftool_fields(Path("a.jpg"), "/usr/bin/exiftool", image=True)
+    assert fields is not None
+    assert fields.get("dimensions") == "1200x1600"
+    assert fields.get("jfifVersion") == "1.02"
+    # redundancy dropped, file-type noise dropped
+    assert "imageWidth" not in fields and "imageHeight" not in fields
+    assert "imageSize" not in fields and "megapixels" not in fields
+    assert "fileType" not in fields
+
+
+def test_exiftool_fields_error_falls_back_to_none(monkeypatch):
+    """A failing/missing exiftool returns None so callers fall back to abrupt extractors."""
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: _FakeProc(1, ""))
+    assert media._exiftool_fields(Path("a.mp3"), "/usr/bin/exiftool") is None
+    assert media._exiftool_fields(Path("a.mp3"), "") is None
+    assert media._exiftool_fields(Path("a.mp3"), None) is None
+
+
+def test_content_fields_uses_exiftool_or_falls_back(sample_dir, monkeypatch):
+    """audio/image content extraction uses exiftool when available, mutagen/PIL otherwise."""
+    base, _copy = _pair(sample_dir, MP3)
+    tools = {"exiftool": "/usr/bin/exiftool"}
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: _FakeProc(0, _FAKE_EXIF))
+    rich = media._content_fields(base, "audio", tools)
+    assert rich.get("artist") == "Someone"  # from mocked exiftool
+    # without exiftool the mutagen fallback still yields tags
+    fallback = media._content_fields(base, "audio", {})
+    assert fallback.get("artist") == "Freds Folks"

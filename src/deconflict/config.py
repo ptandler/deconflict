@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import warnings
 from dataclasses import dataclass, field
@@ -21,7 +22,18 @@ class Config:
         return self.engine.custom_patterns
 
 
-DEFAULT_CFG_PATH = Path.home() / ".config" / "deconflict" / "config.toml"
+def _xdg_config_dir() -> Path:
+    """XDG_CONFIG_HOME (or ~/.config) for the per-user config file."""
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+
+
+def _xdg_cache_dir() -> Path:
+    """XDG_CACHE_HOME (or ~/.cache) as the default cache root."""
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+
+
+DEFAULT_CFG_PATH = _xdg_config_dir() / "deconflict" / "config.toml"
+DEFAULT_CACHE_DIR = str(_xdg_cache_dir() / "deconflict")
 
 
 def default_path() -> Path:
@@ -38,6 +50,7 @@ def load(path: Path | None = None) -> Config:
     path = (Path(path) if path else DEFAULT_CFG_PATH).expanduser()
     cfg = Config(source=path if path.exists() else None)
     if not path.exists():
+        cfg.engine.config_path = None
         return cfg
     try:
         import tomllib
@@ -52,7 +65,28 @@ def load(path: Path | None = None) -> Config:
         return cfg
     cfg = _from_dict(raw)
     cfg.source = path
+    cfg.engine.config_path = path
     return cfg
+
+
+def _from_dict(raw: dict) -> Config:
+    scan = raw.get("scan", {})
+    gen = raw.get("general", {})
+    custom = [
+        (p["name"], p["base_name"], p.get("winner", "copy"))
+        for p in scan.get("patterns", [])
+        if isinstance(p, dict) and "name" in p and "base_name" in p
+    ]
+    engine = EngineConfig(
+        dirs=[Path(d) for d in scan.get("default_dirs", [])],
+        enabled_patterns=list(scan.get("enabled_patterns", ["nextcloud", "pacman", "syncthing"])),
+        custom_patterns=custom,
+        backup_dir=gen.get("backup_dir", "~/deconflict-backups"),
+        cache_dir=gen.get("cache_dir", DEFAULT_CACHE_DIR),
+        file_type_tools=dict(raw.get("file_types", {})),
+        file_type_edit_tools=dict(raw.get("file_types_edit", {})),
+    )
+    return Config(engine=engine, tools=dict(raw.get("tools", {})))
 
 
 def _from_dict(raw: dict) -> Config:

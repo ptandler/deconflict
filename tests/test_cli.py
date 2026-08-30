@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -187,7 +188,8 @@ def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch):
     files_before = {p.name: p.read_bytes() for p in sample_dir.iterdir() if p.is_file()}
     result = runner.invoke(app, [], input="s\n" * 10)
     assert result.exit_code == 0
-    assert "resolved 6 group(s)" in result.stdout
+    # item: final message distinguishes skipped from actually-resolved groups
+    assert "resolved 0 group(s) (6 skipped)" in result.stdout
     # skipping must not touch any file
     files_after = {p.name: p.read_bytes() for p in sample_dir.iterdir() if p.is_file()}
     assert files_after == files_before
@@ -243,10 +245,15 @@ def test_interactive_metadata_menu_option(sample_dir, tmp_path, monkeypatch):
     result = runner.invoke(app, [], input="m\n" + "s\n" * 10)
     assert result.exit_code == 0
     assert "(m)etadata" in result.stdout
+    # item: attrs + content are ONE combined table titled "metadata diff"
     assert "metadata diff" in result.stdout
     # common + diff fields both appear as table rows
     assert "artist" in result.stdout
     assert "title" in result.stdout
+    # single table also shows size/created/modified file attrs
+    assert "created" in result.stdout and "modified" in result.stdout and "size" in result.stdout
+    # item: size shows BOTH human-readable and byte count
+    assert "bytes" in result.stdout
 
 
 def test_truncate_meta():
@@ -271,3 +278,72 @@ def test_interactive_office_metadata_cell_truncated(sample_dir, tmp_path, monkey
     assert result.exit_code == 0
     assert "content:" in result.stdout
     assert "+" in result.stdout and "more" in result.stdout
+
+
+def test_metadata_header_truncation_keeps_recordside_tail():
+    """item: truncating a long metadata-header filename must keep a meaningful
+    number of chars from the END — the copy file pattern (date+ext) stays visible."""
+    from deconflict.cli import _truncate_name
+
+    # short name passes through untouched
+    assert _truncate_name("a.txt", 40) == "a.txt"
+    long = "Vorlage_Transkription (conflicted copy 2026-01-08 165356).docx"
+    out = _truncate_name(long, 40)
+    # total printed width respects the limit (head + "…" + tail)
+    assert len(out) <= 40
+    # the trailing conflict-pattern chars are preserved
+    assert out.endswith("165356).docx")
+    # and a leading fragment is also kept, bridged by an ellipsis
+    assert out.startswith("Vorla") and "…" in out
+
+
+def test_metadata_attr_rows_dim_when_identical(sample_dir, tmp_path):
+    """item: the size/created/modified attr rows are GRAY (dim) when the two
+    files' values are equal, and plain when they differ — matching how content
+    rows are dimmed. Deterministic: builds pairs with known equal/differing size."""
+    import re
+    from io import StringIO
+
+    from rich.console import Console
+
+    import deconflict.cli as cli
+    from deconflict.engine import Engine, EngineConfig
+
+    # base + a conflict copy that is byte-identical (size equal -> dim)
+    d = tmp_path / "metascan"
+    d.mkdir()
+    (d / "same.txt").write_text("hello world")
+    shutil.copy2(d / "same.txt", d / "same (conflicted copy 2020-01-01 000000).txt")
+    # base + a conflict copy with different content (size differs -> plain)
+    (d / "diff.txt").write_text("hello world")
+    (d / "diff (conflicted copy 2020-01-01 000000).txt").write_text("hello world, and more!")
+
+    engine = Engine(
+        EngineConfig(dirs=[d], backup_dir=tmp_path / "backup", cache_dir=tmp_path / "cache")
+    )
+    analyzed = engine.analyze(engine.scan())
+    by_base = {g.base.name: ga for g, ga in analyzed if g.base is not None}
+
+    def render(ga) -> str:
+        rec = Console(record=True, file=StringIO(), force_terminal=True, color_system="standard")
+        old, cli.console = cli.console, rec
+        try:
+            cli._print_metadata_diff(ga, 0)
+        finally:
+            cli.console = old
+        return rec.export_text(styles=True)
+
+    def is_dim(line: str) -> bool:
+        return "2m" in line or "2;" in line
+
+    def strip_ansi(line: str) -> str:
+        return re.sub(r"\x1b\[[0-9;]*m", "", line)
+
+    def size_row(out: str) -> str:
+        # the size row is the only one containing "bytes", so it uniquely identifies it
+        return next(line for line in out.splitlines() if "bytes" in strip_ansi(line))
+
+    # equal bytes -> size row dimmed
+    assert is_dim(size_row(render(by_base["same.txt"])))
+    # differing bytes -> size row plain
+    assert not is_dim(size_row(render(by_base["diff.txt"])))

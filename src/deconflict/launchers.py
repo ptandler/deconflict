@@ -49,7 +49,10 @@ KIND_META_EDIT_TOOL: dict[str, str] = {
 
 
 def _launch(cmd: list[str]) -> None:
-    print(f"launching: {cmd[0]} …")
+    # Show the full command (including the file paths being opened) so the user
+    # knows exactly what tools act on which files — not just the executable.
+    parts = [a if " " not in a and "'" not in a else f'"{a}"' for a in cmd]
+    print("launching: " + " ".join(parts))
     subprocess.run(cmd, check=False)
 
 
@@ -94,6 +97,14 @@ class Launcher:
     def edit_meta_available(self, kind: str) -> bool:
         return kind in KIND_META_EDIT_TOOL and self._kind_exe(kind, self.edit_tool) is not None
 
+    def view_edit_collapse(self, kind: str) -> bool:
+        """True when VIEW and EDIT resolve to the same executable, so showing both
+        is meaningless (e.g. LibreOffice opens the doc either way). The CLI then
+        offers only (e)dit."""
+        v = self._kind_exe(kind, self.kind_tool) or self._fallback_viewer(kind)
+        e = self._kind_exe(kind, self.edit_tool)
+        return v is not None and e is not None and v == e
+
     def _kind_exe(self, kind: str, resolver) -> str | None:
         key = resolver(kind)
         return self.tools.get(key)
@@ -103,6 +114,28 @@ class Launcher:
         if kind in ("image", "video", "audio"):
             return self.tools.get("viewer")
         return None
+
+    def tools_for(self, kind: str) -> list[str]:
+        """The [tools] keys that back this kind's actions, in menu relevance order.
+
+        Used by (?)tools so it lists only what is actually run for this file, not
+        every configured tool.
+        """
+        keys: list[str] = []
+        view_key = self.kind_tool(kind)
+        keys.append(view_key)
+        edit_key = self.edit_tool(kind)
+        if edit_key != view_key:
+            keys.append(edit_key)
+        meta_key = KIND_META_EDIT_TOOL.get(kind)
+        if meta_key and meta_key not in keys:
+            keys.append(meta_key)
+        if kind in ("text", "other"):
+            keys.append("diff")
+        elif kind != "office" and "exiftool" not in keys:
+            # media kinds diff via the universal exiftool
+            keys.append("exiftool")
+        return list(dict.fromkeys(keys))
 
     # -- command construction -----------------------------------------------
     def run(self, group, ga, tool: ToolType, target: Path) -> None:

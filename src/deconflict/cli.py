@@ -13,10 +13,10 @@ from rich.table import Table
 
 from .analyze import GroupAnalysis
 from .cache import clean_cache
-from .config import Config, load, write_init_config
+from .config import Config, default_path, load, write_init_config
 from .engine import Action, ActionKind, Engine
 from .launchers import ToolType
-from .media import metadata_fields
+from .media import ATTR_CREATED, ATTR_MODIFIED, ATTR_SIZE, META_ATTR_FIELDS
 from .patterns import build_patterns
 from .scan import ConflictGroup
 
@@ -92,6 +92,8 @@ def _size_cell(ga: GroupAnalysis, a, idx) -> str:
 
 _META_CELL_MAX = 70  # cap per-metadata-value length in on-screen tables
 
+_ATTR_FIELDS = set(META_ATTR_FIELDS)  # fs-attribute field names (shown, not "diff" markers)
+
 
 def _truncate_meta(value: str, limit: int = _META_CELL_MAX) -> str:
     """Shorten a long metadata value (e.g. office XML) for a table cell."""
@@ -118,11 +120,21 @@ def _root(
 
 def _collect_groups(pattern: str | None, dirs: list[Path], config_path: Path | None = None):
     engine = _require_dirs(_cfg(config_path, pattern, dirs))
+    _report_scan(engine)
     result = engine.scan()
     if not result:
         console.print("[green]no conflicts found[/green]")
         raise typer.Exit(0)
     return engine, engine.analyze(result)
+
+
+def _report_scan(engine: Engine) -> None:
+    """Item: log to console whether we're rescanning or reusing the cache."""
+    if engine.cache is not None and engine.cache_used:
+        console.print(f"[dim]using cached scan ({engine.cache.path.name})…[/dim]")
+    else:
+        dirs = ", ".join(str(d) for d in engine.cfg.dirs)
+        console.print(f"[dim]scanning {dirs}…[/dim]")
 
 
 @app.command()
@@ -195,6 +207,8 @@ def scan(
     engine = _require_dirs(_cfg(ctx.obj or config, pattern, dirs))
     if (no_cache or refresh) and engine.cache is not None:
         engine.cache.clear()
+        engine.cache_used = False
+    _report_scan(engine)
     result = engine.scan()
     if not result:
         console.print("[green]no conflicts found[/green]")
@@ -262,6 +276,7 @@ def resolve(
     if dry_run:
         cfg.engine.dry_run = True
     engine = _require_dirs(cfg)
+    _report_scan(engine)
     result = engine.scan()
     if not result:
         console.print("[green]no conflicts to resolve[/green]")
@@ -281,6 +296,8 @@ def _run_auto(engine: Engine, groups, rule: str) -> None:
 
 def _run_interactive(engine: Engine, groups) -> None:
     total = len(groups)
+    resolved = 0
+    skipped = 0
     for i, (group, ga) in enumerate(groups, 1):
         while True:
             _show_group(engine, group, ga, i, total)
@@ -301,9 +318,16 @@ def _run_interactive(engine: Engine, groups) -> None:
                     console.print("[dim]press [bold]Enter[/bold] when done reviewing[/dim]")
                     input()
                 continue
+            if action.kind is ActionKind.SKIP:
+                skipped += 1
+            else:
+                resolved += 1
             _apply(engine, group, action)
             break
-    console.print(f"\n[done]resolved {total} group(s)")
+    msg = f"\n[done]resolved {resolved} group(s)"
+    if skipped:
+        msg += f" ({skipped} skipped)"
+    console.print(msg)
 
 
 def _apply(engine: Engine, group: ConflictGroup, action: Action) -> None:
@@ -350,7 +374,7 @@ def _show_group(
             elif md is True:
                 meta = "[green]same[/green]"
             else:
-                differ = _differing_fields(engine, ga, idx)
+                differ = _differing_fields(ga, idx)
                 meta = "[yellow]diff[/yellow]"
                 if differ:
                     meta += "\n" + "\n".join(f"[dim]{d}[/dim]" for d in differ)
@@ -380,54 +404,52 @@ def _actions(engine: Engine, ga: GroupAnalysis) -> list[tuple[str, str, ToolType
     """Ordered (hotkey, label, ToolType | inline-tag) tool actions for this kind.
 
     A ToolType means 'launch an external tool'; an inline-tag ('term_diff',
-    'meta_view') means the action is handled directly in the prompt loop.
+    'office_diff', 'meta_view') means the action is handled directly in the
+    prompt loop.
     """
     k = ga.kind
     a: list[tuple[str, str, ToolType | str]] = []
     la = engine.launcher()
+    view = (not la.view_edit_collapse(k)) and la.view_available(k)
+    edit = engine.available_edit(ga)
     if k in ("text", "other"):
-        if la.view_available(k):
+        if view:
             a.append(("v", "view", ToolType.VIEW))
         if k == "text":
             a.append(("d", "diff", "term_diff"))
-        if engine.available_edit(ga) and k == "text":
+        if edit:
             a.append(("e", "edit", ToolType.EDIT))
-        if k == "text" and engine.available_diff(ga):
-            a.append(("m", "meld", ToolType.DIFF))
     elif k == "audio":
-        if la.view_available(k):
+        if view:
             a.append(("v", "listen", ToolType.VIEW))
-        if engine.available_edit(ga):
+        if edit:
             a.append(("e", "edit tags", ToolType.EDIT))
         if engine.available_diff(ga):
             a.append(("d", "meta-diff", ToolType.DIFF))
     elif k == "image":
-        if la.view_available(k):
+        if view:
             a.append(("v", "view", ToolType.VIEW))
-        if engine.available_edit(ga):
+        if edit:
             a.append(("e", "edit", ToolType.EDIT))
         if engine.available_diff(ga):
             a.append(("d", "meta-diff", ToolType.DIFF))
         if engine.available_edit_meta(ga):
             a.append(("x", "edit exif", ToolType.EDIT_META))
     elif k == "video":
-        if la.view_available(k):
+        if view:
             a.append(("v", "play", ToolType.VIEW))
         if engine.available_diff(ga):
             a.append(("d", "meta-diff", ToolType.DIFF))
     elif k == "office":
-        if la.view_available(k):
-            a.append(("v", "open", ToolType.VIEW))
-        if engine.available_edit(ga):
+        if view:
+            a.append(("o", "pen", ToolType.VIEW))
+        if edit:
             a.append(("e", "edit", ToolType.EDIT))
-        if engine.available_diff(ga):
-            a.append(("d", "diff", ToolType.DIFF))
+        a.append(("d", "diff", "office_diff"))
     elif k == "kdbx":
         a.append(("v", "merge", ToolType.VIEW))
-    if k == "text":
-        pass
-    elif _meta_differs(ga):
-        a.append(("m", "metadata", "meta_view"))
+    # (m)etadata is always available (generic file attrs at minimum).
+    a.append(("m", "etadata", "meta_view"))
     return a
 
 
@@ -451,8 +473,11 @@ def _prompt(engine: Engine, group: ConflictGroup, ga: GroupAnalysis) -> Action |
             if tool == "term_diff":
                 _print_text_diff(group, target)
                 continue
+            if tool == "office_diff":
+                _print_office_diff(group, target)
+                continue
             if tool == "meta_view":
-                _print_metadata_diff(engine, ga, 0)
+                _print_metadata_diff(ga, 0)
                 continue
         if ans in ("h", "keep-both"):
             return Action.keep_both()
@@ -484,6 +509,49 @@ def _menu_text(engine: Engine, ga: GroupAnalysis) -> str:
     return " ".join(parts) + ": "
 
 
+def _hl_runs(old: str, new: str) -> tuple[str, str]:
+    """Return (old, new) lines with the differing character runs wrapped in markers.
+
+    Uses SequenceMatcher so only the changed characters are highlighted; identical
+    bulk stays plain. Returns the plain lines when both are empty/unchanged.
+    """
+    from difflib import SequenceMatcher
+
+    matcher = SequenceMatcher(None, old, new)
+    old_parts: list[str] = []
+    new_parts: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            old_parts.append(old[i1:i2])
+            new_parts.append(new[j1:j2])
+        else:
+            old_parts.append(f"{{+}}{old[i1:i2]}{{/}}")
+            new_parts.append(f"{{+}}{new[j1:j2]}{{/}}")
+    return "".join(old_parts), "".join(new_parts)
+
+
+def _print_rich_line(sign: str, text: str, base_color: str) -> None:
+    """Print a diff line (sign + text) with the {+...+/} runs colored differently."""
+    # walk segments split on {+ ... +/} markers; highlight deltas with a brighter style
+    out: list[str] = []
+    pos = 0
+    while True:
+        start = text.find("{+", pos)
+        if start == -1:
+            out.append(f"[{base_color}]{escape(text[pos:])}[/{base_color}]")
+            break
+        out.append(f"[{base_color}]{escape(text[pos:start])}[/{base_color}]")
+        end = text.find("{/}", start)
+        if end == -1:
+            out.append(f"[{base_color}]{escape(text[start:])}[/{base_color}]")
+            break
+        seg = text[start + 2 : end]
+        hi = "bold magenta" if base_color == "red" else "bold cyan"
+        out.append(f"[{hi}]{escape(seg)}[/{hi}]")
+        pos = end + 3
+    console.print(sign + "".join(out))
+
+
 def _print_text_diff(group: ConflictGroup, target: Path | None) -> None:
     if target is None:
         console.print("[yellow]nothing to diff[/yellow]")
@@ -498,6 +566,56 @@ def _print_text_diff(group: ConflictGroup, target: Path | None) -> None:
     except OSError as exc:
         console.print(f"[red]diff failed: {exc}[/red]")
         return
+    diff = list(difflib.unified_diff(a, b, fromfile=str(other), tofile=str(target), lineterm=""))
+    if not diff:
+        console.print("[dim]no textual difference[/dim]")
+        return
+    # Render hunks as old/new pairs with char-level highlight on changed lines.
+    pending_removed: list[str] = []
+    for line in diff:
+        if line.startswith("---") or line.startswith("+++") or line.startswith("@@"):
+            console.print(f"[bold yellow]{escape(line)}[/bold yellow]")
+            continue
+        if line.startswith("-"):
+            pending_removed.append(line[1:])
+            continue
+        if line.startswith("+"):
+            new = line[1:]
+            if pending_removed:
+                old = pending_removed.pop(0)
+                # paired change -> highlight only the differing characters
+                if old == new:
+                    console.print(f"[dim] {escape(old)}[/dim]")
+                    continue
+                hl_old, hl_new = _hl_runs(old, new)
+                _print_rich_line("[red]-[/red] ", hl_old, "red")
+                _print_rich_line("[green]+[/green] ", hl_new, "green")
+            else:
+                _print_rich_line("[green]+[/green] ", new, "green")
+            continue
+        # context line: flush any orphaned removed lines, then print context dim
+        for rem in pending_removed:
+            _print_rich_line("[red]-[/red] ", rem, "red")
+        pending_removed = []
+        console.print(f"[dim] {escape(line)}[/dim]")
+    for rem in pending_removed:
+        _print_rich_line("[red]-[/red] ", rem, "red")
+
+
+def _print_office_diff(group: ConflictGroup, target: Path | None) -> None:
+    """Diff two office docs by their extracted text (avoids soffice --compare, which
+    this LibreOffice build rejects; also makes office (d)iff work headlessly)."""
+    from .media import _extract_office_text
+
+    if target is None:
+        console.print("[yellow]nothing to diff[/yellow]")
+        return
+    other = next((f for f in group.files if f.resolve() != target.resolve()), None)
+    if other is None:
+        console.print("[yellow]nothing to diff against[/yellow]")
+        return
+    a = _extract_office_text(other).splitlines()
+    b = _extract_office_text(target).splitlines()
     diff = list(difflib.unified_diff(a, b, fromfile=str(other), tofile=str(target), lineterm=""))
     if not diff:
         console.print("[dim]no textual difference[/dim]")
@@ -520,80 +638,159 @@ def _meta_differs(ga: GroupAnalysis) -> bool:
 FieldDicts = tuple[dict[str, str], dict[str, str]]
 
 
-def _diff_fields(engine: Engine, ga: GroupAnalysis, idx: int) -> FieldDicts:
-    """Metadata field dicts for (base, copy) at `idx` ({} when not extractable)."""
+def _diff_fields(ga: GroupAnalysis, idx: int) -> FieldDicts:
+    """Metadata field dicts for (base, copy) at `idx`, read from analysis (no re-extract)."""
     if ga.base is None or idx >= len(ga.copies):
         return {}, {}
-    bf = metadata_fields(ga.base.path, ga.kind, engine.tools.found)
-    cf = metadata_fields(ga.copies[idx].path, ga.kind, engine.tools.found)
-    return bf, cf
+    base = ga.meta_fields[0] if ga.meta_fields else {}
+    copy = ga.meta_fields[idx + 1] if idx + 1 < len(ga.meta_fields) else {}
+    return base, copy
 
 
-def _differing_fields(engine: Engine, ga: GroupAnalysis, idx: int) -> list[str]:
-    """Short `field: value` lines for the copy's fields that differ from the base."""
-    bf, cf = _diff_fields(engine, ga, idx)
+def _differing_fields(ga: GroupAnalysis, idx: int) -> list[str]:
+    """Short `field: value` lines for the copy's CONTENT fields that differ from base."""
+    bf, cf = _diff_fields(ga, idx)
     return [
         f"{k}: {_truncate_meta(cf.get(k, '∅'))}"
         for k in dict.fromkeys([*bf, *cf])
-        if bf.get(k) != cf.get(k)
+        if bf.get(k) != cf.get(k) and k not in _ATTR_FIELDS
     ]
 
 
+_META_HEADER_TAIL = 26  # trailing chars kept on header truncation (conflict pattern/date+ext)
+
+
+def _truncate_name(name: str, limit: int, tail: int = _META_HEADER_TAIL) -> str:
+    """Keep both a start AND a meaningful tail when the name overflows the limit.
+
+    Truncation shows `head … tail` instead of only `head …`: the tail preserves
+    the conflict-pattern suffix (date + time + extension) that's otherwise cut
+    off — while `limit` stays the total printed width.
+    """
+    if len(name) <= limit:
+        return name
+    tail = min(tail, limit - 2)
+    head = limit - 1 - tail
+    return name[:head] + "…" + name[-tail:]
+
+
 def _meta_diff_columns(ga: GroupAnalysis, idx: int, limit: int = 40) -> tuple[str, str]:
-    """Short header labels for the metadata table: `#N <truncated-filename>`."""
-    name = lambda p: p if len(p) <= limit else p[: limit - 1] + "…"  # noqa: E731
+    """Short header labels for the metadata table: `#N <truncated-filename>`.
+
+    Truncation keeps the trailing conflict-pattern chars (see `_truncate_name`).
+    """
+    name = lambda p: _truncate_name(p, limit)  # noqa: E731
     base = f"#0 {name(ga.base.path.name)}" if ga.base else "#0"
     copy = f"#{idx + 1} {name(ga.copies[idx].path.name)}" if idx < len(ga.copies) else f"#{idx + 1}"
     return base, copy
 
 
-def _print_metadata_diff(engine: Engine, ga: GroupAnalysis, idx: int) -> None:
-    """A table with base and copy as columns; common and differing fields as rows."""
-    if not _meta_differs(ga):
-        console.print("[yellow]no metadata difference to show[/yellow]")
-        return
+def _print_metadata_diff(ga: GroupAnalysis, idx: int) -> None:
+    """ONE combined table with base and copy as columns.
+
+    Merges the generic file attributes (size/created/modified) and the per-kind
+    metadata fields into a single table. Reads stored `ga.meta_fields` (set once
+    during analysis), so nothing is re-extracted. The `size` row shows both the
+    human-readable size and the byte count, plus the diff vs the other file.
+    """
     if idx >= len(ga.copies) or ga.base is None:
         console.print("[yellow]nothing to compare[/yellow]")
         return
-    bf, cf = _diff_fields(engine, ga, idx)
+    bf, cf = _diff_fields(ga, idx)
     if not bf and not cf:
         console.print("[yellow]no extractable metadata[/yellow]")
         return
     base_label, copy_label = _meta_diff_columns(ga, idx)
     keys = list(dict.fromkeys([*bf, *cf]))
-    common = [k for k in keys if bf.get(k) == cf.get(k)]
-    diff = [k for k in keys if bf.get(k) != cf.get(k)]
+    content = [k for k in keys if k not in _ATTR_FIELDS]
+    common = [k for k in content if bf.get(k) == cf.get(k)]
+    diff = [k for k in content if bf.get(k) != cf.get(k)]
+
     table = Table(title="metadata diff", header_style="bold")
     table.add_column("field")
     table.add_column(base_label, overflow="ellipsis")
     table.add_column(copy_label, overflow="ellipsis")
-    for k in common:
-        table.add_row(
-            k, escape(_truncate_meta(bf.get(k))), escape(_truncate_meta(cf.get(k))), style="dim"
-        )
-    if common and diff:
+    # Generic attrs: dim the whole row when the two files' values are identical,
+    # matching how identical content rows are dimmed below.
+    copy = ga.copies[idx]
+    sizes_equal = ga.base.info.size == copy.info.size
+    table.add_row(
+        ATTR_SIZE,
+        _size_meta_cell(ga.base.info.size, None),
+        _size_meta_cell(copy.info.size, ga.base.info.size),
+        style="dim" if sizes_equal else None,
+    )
+    created_equal = bf.get(ATTR_CREATED) == cf.get(ATTR_CREATED)
+    table.add_row(
+        ATTR_CREATED,
+        escape(_truncate_meta(bf.get(ATTR_CREATED, ""))),
+        escape(_truncate_meta(cf.get(ATTR_CREATED, ""))),
+        style="dim" if created_equal else None,
+    )
+    modified_equal = bf.get(ATTR_MODIFIED) == cf.get(ATTR_MODIFIED)
+    table.add_row(
+        ATTR_MODIFIED,
+        escape(_truncate_meta(bf.get(ATTR_MODIFIED, ""))),
+        escape(_truncate_meta(cf.get(ATTR_MODIFIED, ""))),
+        style="dim" if modified_equal else None,
+    )
+
+    if content:
         table.add_section()
-    for k in diff:
-        table.add_row(
-            k,
-            escape(_truncate_meta(bf.get(k, "∅"))),
-            escape(_truncate_meta(cf.get(k, "∅"))),
-        )
+        for k, bv, cv in _row_cells(bf, cf, common):
+            table.add_row(k, bv, cv, style="dim")
+        if common and diff:
+            table.add_section()
+        for k, bv, cv in _row_cells(bf, cf, diff):
+            table.add_row(k, bv, cv)
     console.print(table)
     if diff:
-        console.print("[dim]differing rows shown in plain; shared fields dimmed[/dim]")
+        console.print("[dim]differing fields for copy vs base (shared rows dimmed)[/dim]")
+
+
+def _row_cells(bf, cf, keys: list[str]) -> list[tuple[str, str, str]]:
+    """(field, base-cell, copy-cell) rows, truncated and escaped."""
+    out = []
+    for k in keys:
+        out.append(
+            (k, escape(_truncate_meta(bf.get(k, ""))), escape(_truncate_meta(cf.get(k, ""))))
+        )
+    return out
+
+
+def _size_meta_cell(size: int, other: int | None) -> str:
+    """Size cell: human-readable + bytes, with diff vs the other file."""
+    cell = f"{_human(size)} ({size:,} bytes)"
+    if other is None:
+        return cell
+    delta = size - other
+    if delta == 0:
+        return f"{cell} [dim](=)[/dim]"
+    arrow = "↑" if delta > 0 else "↓"
+    bit = f" {_human(abs(delta))}" if delta else ""
+    return f"{cell} [yellow]({arrow}{bit})[/yellow]"
 
 
 def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
-    tool_key = engine.launcher().kind_tool(ga.kind)
-    console.print(f"[bold]file kind:[/bold] {ga.kind} → view tool: {tool_key}")
-    console.print("[bold]tools:[/bold]")
-    for name, found, candidates, hint in engine.tool_status():
+    la = engine.launcher()
+    cfg_path = engine.cfg.config_path or default_path()
+    console.print(f"[bold]file kind:[/bold] {ga.kind}")
+    console.print(f"  view: {la.kind_tool(ga.kind)} · edit: {la.edit_tool(ga.kind)}")
+    console.print("[bold]tools used for this file:[/bold]")
+    for key in la.tools_for(ga.kind):
+        found = engine.tools.get(key)
         if found:
-            console.print(f"  [green]{name}[/green]: {found}")
+            console.print(f"  [green]{key}[/green]: {found}")
         else:
+            hint = engine.tools.hint(key)
             suffix = f"  ({hint})" if hint else ""
-            console.print(f"  [red]{name}[/red]: missing ({', '.join(candidates)}){suffix}")
+            console.print(
+                f"  [red]{key}[/red]: missing ({', '.join(engine.tools.candidates(key))}){suffix}"
+            )
+    console.print(
+        f"[dim]configure tools in ({cfg_path}) — sections [tools], [file_types], "
+        "[file_types_edit]; run `deconflict init-config` to write a template.[/dim]"
+    )
 
 
 def main() -> None:

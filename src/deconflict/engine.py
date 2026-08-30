@@ -7,6 +7,7 @@ interaction loop: they present a group, ask for an Action, and either call
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -58,6 +59,11 @@ class Action:
         return cls(ActionKind.TOOL, target=target, tool=tool_type)
 
 
+def _default_cache_dir() -> str:
+    """XDG_CACHE_HOME (or ~/.cache) based default cache root, as a str path."""
+    return str(Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "deconflict")
+
+
 @dataclass
 class EngineConfig:
     dirs: list[Path] = field(default_factory=list)
@@ -66,11 +72,12 @@ class EngineConfig:
     )
     custom_patterns: list[tuple[str, str, str]] = field(default_factory=list)
     backup_dir: str | Path = "~/deconflict-backups"
-    cache_dir: str | Path = "~/.cache/deconflict"
+    cache_dir: str | Path = field(default_factory=_default_cache_dir)
     dry_run: bool = False
     follow_symlinks: bool = False
     file_type_tools: dict[str, str] = field(default_factory=dict)  # kind -> [tools] view key
     file_type_edit_tools: dict[str, str] = field(default_factory=dict)  # kind -> [tools] edit key
+    config_path: Path | None = None  # effective config file (None = built-in defaults)
 
 
 @dataclass
@@ -85,11 +92,13 @@ class Engine:
         )
         self.tools: Tools = self.tools or detect()
         self.cache: FileCache | None = None
+        self.cache_used = False  # True when this scan reused a cached result
         if self.cfg.cache_dir and self.cfg.dirs:
             self.cache = FileCache(self.cfg.cache_dir, cache_key(self.cfg.dirs))
+            self.cache_used = self.cache.path.exists()
 
-    def scan(self) -> ScanResult:
-        result = scan(self.cfg.dirs, self.patterns, self.cfg.follow_symlinks)
+    def scan(self, on_file=None) -> ScanResult:
+        result = scan(self.cfg.dirs, self.patterns, self.cfg.follow_symlinks, on_file=on_file)
         if self.cache is not None and self.cfg.dirs:
             self._refresh_cache(result)
         return result
@@ -159,8 +168,7 @@ class Engine:
             others = [c for c in group.conflicts if c.resolve() != chosen.resolve()]
             return self.resolver.keep_copy(label, group.base, chosen, others, log)
         if action.kind is ActionKind.KEEP_BOTH:
-            self.resolver.keep_both(label, group.base, group.conflicts, log)
-            return []
+            return self.resolver.keep_both(label, group.base, group.conflicts, log)
         return []
 
     @staticmethod
@@ -201,8 +209,9 @@ class Engine:
             tools.append(ToolType.EDIT)
         if self.available_diff(ga):
             tools.append(ToolType.DIFF)
-        if kind in ("audio", "image", "video", "office") and _meta_capable(ga):
-            tools.append(ToolType.VIEW_META)
+        # (m)etadata is always offered: the generic file attributes (size/created/modified)
+        # are extracted for every kind, so there is always something to show.
+        tools.append(ToolType.VIEW_META)
         if self.available_edit_meta(ga):
             tools.append(ToolType.EDIT_META)
         return tools
@@ -217,8 +226,3 @@ class Engine:
 
 def path_of(a) -> Path:
     return a.path
-
-
-def _meta_capable(ga: GroupAnalysis) -> bool:
-    """True when a media group actually has metadata differences to show."""
-    return ga.base is not None and any(m is False for m in ga.meta)

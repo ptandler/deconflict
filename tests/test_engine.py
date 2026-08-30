@@ -87,7 +87,8 @@ def test_supported_tools_per_kind(sample_dir, tmp_path):
     analyzed = engine.analyze(result)
 
     readme = next(ga for g, ga in analyzed if g.base and g.base.name == "Readme.md")
-    assert engine.supported_tools(readme) == [ToolType.VIEW, ToolType.DIFF]
+    # (m)etadata is always offered (generic file attrs), even for text files
+    assert engine.supported_tools(readme) == [ToolType.VIEW, ToolType.DIFF, ToolType.VIEW_META]
 
     mp3_name = "Fröhlicher Kreis - Track12 Scottish Circassian, Irish Washerwoman, My Old Man.mp3"
     mp3 = next(ga for g, ga in analyzed if g.base and g.base.name == mp3_name)
@@ -121,3 +122,31 @@ def test_kind_tool_override_wins(sample_dir, tmp_path):
     launcher = Launcher(Tools({}), file_type_tools={"image": "eog"})
     assert launcher.kind_tool("image") == "eog"
     assert launcher.kind_tool("audio") == "audio_player"  # default unaffected
+
+
+def test_view_edit_collapse_when_same_tool(sample_dir, tmp_path):
+    """When VIEW and EDIT resolve to the same executable (e.g. LibreOffice), the
+    CLI collapses them to a single action (item: view/edit identical)."""
+    from deconflict.launchers import Launcher
+    from deconflict.tools import Tools
+
+    same = Launcher(Tools({"office": "/usr/bin/soffice", "editor": "/usr/bin/editor"}))
+    assert same.view_edit_collapse("office")  # office is both view and edit
+    assert same.view_edit_collapse("text")  # editor is both view and edit
+
+    diff = Launcher(Tools({"audio_player": "/usr/bin/mpv", "mp3_editor": "/usr/bin/kid3"}))
+    assert not diff.view_edit_collapse("audio")  # player vs tag-editor differ
+
+
+def test_launch_prints_full_command_paths(sample_dir, tmp_path, capsys, monkeypatch):
+    """Loading a tool prints the FULL command incl. file paths (not just the exe)."""
+    import deconflict.launchers as launchers_mod
+
+    recorded: list[list[str]] = []
+    monkeypatch.setattr(launchers_mod.subprocess, "run", lambda cmd, **kw: recorded.append(cmd))
+    launchers_mod._launch(["/usr/bin/editor", str(tmp_path / "a file.txt")])
+    out = capsys.readouterr().out
+    assert "launching:" in out
+    assert "/usr/bin/editor" in out
+    assert "a file.txt" in out
+    assert recorded == [["/usr/bin/editor", str(tmp_path / "a file.txt")]]
