@@ -130,10 +130,26 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 - [x] Write CliRunner test for bare-mode interactive (monkeypatch config path, feed "s"=skip) to fix deterministically
   - `test_bare_skips_all_groups_interactively`, quit, `?`-tools, table-flags, no-dirs guidance.
 - [x] `move_to_backup` fast path: atomic `os.replace` when same filesystem, EXDEV fallback to copy→verify→remove (resolve.py; tests green)
+- [ ] important: when launching e.g. audio player (and other documents), print full file path to console, not just "launching: /usr/bin/vlc …" and I don't know what is launched
+- [ ] the metadata detail table should always include create time, mod time, and file size (bytes + the size we have already in the overview table including the diff)
+- [ ] when `deconflict` is running a scan, there should be some console output indicating this (and progress), when no scan is done but just cache is read, this should also be logged to console
+- [ ] the (?) action should also print a note how the tools to use can be configured (incl the config file path used)
+- [ ] config file should use the standard XD... env vars (if it does not yet already)
+- [ ] when view and edit commands are identical (e.g. here for me with libreoffice), only show (e)dit, and not (v)iew (pls rename `(v)open` to `(o)pen`)
+- [ ] we should improve the metadata handling in general: when scanning / analyzing, metadata should be included in result, so we don't need to re-analyze. but truncate; pls recommend how to treat embedded cover art in audio, could be large ...? -> to we have generic metadata independen of file type. so we can always have the (m)etadata action available
+- [ ] I noticed with IMG-20181122-WA0004.jpg that the overview table says "metadata same", but meta-diff returns several differences!
 - [ ] improve metadata for office documents. could it be that it currently takes the plain xml?
 - [ ] is there a char-based diff, e.g. highlight the changes within a line?
 - [ ] the final message of resolve still says "resolved x groups, even if some where skipped and not resolved
 - [ ] **tool-actions matrix (IN PROGRESS)**: separate `(v)iew` from `(e)dit` per kind; audio `(v)iew` → audio player; add `(x)edit-meta`; universal meta-diff via ExifTool `-diff`; per-kind diff defaults (meld text / soffice --compare office / exiftool -diff media); default `mp3_editor` → GUI (kid3/easytag/picard) not kid3-cli. Includes launchers.py ToolTypes (VIEW/EDIT/DIFF/VIEW_META/EDIT_META), KIND_*TOOL tables, config `[file_types_edit]`, cli menu via `_actions`, rejected-tag-default choice, tests.
+- [ ] what does actually (h)keep-both do: will it rename the copies to something not matching the pattern? is or should this be interactive?
+- [ ] office diff fails: launching: /usr/bin/soffice … LibreOffice 25.8.7.3 580(Build:3) Error in option: --compare
+- [ ] the "(?)tools" action should print the tools that are run for this very specific file / file type. do not list all tools, but just the ones we use here
+- [ ] the (m)eld action should be more generic. so (d)iff is console diff per default (depending on file type), maybe "(m)erge" instead?
+
+Usage: soffice [argument...]
+argument - switches, switch parameters and document URIs (filenames).
+
 
 ## Open follow-ups
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
