@@ -111,6 +111,12 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
   - Diagnostic: bare run reports "no directories" while direct `_cfg`/load() sees dirs — needs CliRunner test to confirm
 - [ ] our simple resolve CLI should offer only actions supported for current file type or at least mark those that are supported. in the config we should configure the actions for each file type, e.g. which tool to use. it should also have recommendations for external tools to install (and ideally suggest a mise comment to do so)
 - [ ] "view" should open file in suggested app, so no separate "(o)ffice (k)eepass" - and it should open both files and wait then.
+- [ ] interactive resolve should have "(q)uit" option
+- [ ] lets improve the initial "diff" table:
+  - [ ] include a flag if content is identical
+  - [ ] indicate which file is larger / smaller
+  - [ ] for mp3 / pictures and all file types where we can get meta data (maybe also office types?): show diff for meta-data and show if ONLY meta data has been changed (if possible)
+- [ ] add an option to printout which internal or external tool will be used for the different actions (like "(?) print tools" maybe)
 - [ ] Write CliRunner test for bare-mode interactive (monkeypatch config path, feed "s"=skip) to fix deterministically
 - [ ] First commit via caveman-commit skill
 
