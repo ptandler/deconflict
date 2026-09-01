@@ -88,7 +88,7 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 - jpg pair: no EXIF → dims-only fallback + open viewer.
 - md/ods/xlsx/docx pairs: content diff; office via zip text extraction.
 
-## TodoList
+## TodoList (v1 — completed 2026-08-30)
 - [x] Write plan to `.opencode/plans/` + create AGENTS.md
 - [x] (user) rename project dir → deconflict; restart opencode
 - [x] git init + scaffold: mise.toml, pyproject.toml, .gitignore, LICENSE, config.example.toml, CI, uv.lock
@@ -101,77 +101,80 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 - [x] mise task `devenv` = `uv tool install --editable .` (dev testing); `install` kept for non-editable
 - [x] CLI polish: add `--config FILE` option + `config` print command
 - [x] Config: warn loudly on TOML parse error instead of silent default fallback; fix `config.example.toml` `r"..."` raw-string (invalid TOML) bug
-- [x] Cache: `deconflict cache clean [--dry-run|--all|--older-than-days]` prunes stale caches (dead scan dirs / age / explicit); `clean_cache()` in cache.py
+- [x] Cache: `deconflict cache clean [--dry-run|--all|--older-than-days]` prunes stale caches; `clean_cache()` in cache.py
 - [x] Cache: invalidate active cache after a real resolve (`_invalidate_cache`), never on `--dry-run`
-- [x] Cache: `pytest_sessionfinish` hook in tests/conftest.py prunes the shared default cache of dead-dir entries after the run
-- [x] Fix pre-existing `move_to_backup` ENAMETOOLONG bug (unbounded collision re-prefix) → bounded, name-capped `_unique_target`
+- [x] Cache: `pytest_sessionfinish` hook in tests/conftest.py prunes shared default cache of dead-dir entries
+- [x] Fix pre-existing `move_to_backup` ENAMETOOLONG bug (unbounded collision re-prefix) → bounded `_unique_target`
 - [x] Tests for all of the above (cache cleanup, CLI cache clean, resolve invalidation, long-name collision) — 63 passing
-- [x] Fix bare `deconflict` (no args) → interactive resolve
-  - Root cause: bare mode had no config signal — with no config file there are no `default_dirs`, so it correctly reported "no directories" (exit 2) but without guidance. `invoke_without_command=True` was already in place.
-  - CliRunner tests prove bare mode runs the interactive loop (config with dirs + skip), (q)uit aborts cleanly, and the no-config case now prints `init-config` guidance (exit 2).
-- [x] our simple resolve CLI should offer only actions supported for current file type or at least mark those that are supported. in the config we should configure the actions for each file type, e.g. which tool to use. it should also have recommendations for external tools to install (and ideally suggest a mise comment to do so)
-  - `media.file_kind()` classifies groups (audio/image/video/office/kdbx/text/other); config `[file_types]` overrides which `[tools]` entry opens each kind; menu letters (d/m/e) only render for text, office/keepass folded into (v)iew.
-  - `(?)tools` prints found/missing with install hints (INSTALL_HINTS in tools.py). (mise comment idea noted — these are OS app tools, hints give apt/brew.)
-- [x] "view" should open file in suggested app, so no separate "(o)ffice (k)eepass" - and it should open both files and wait then.
-  - `(v)iew` → `Launcher.view_commands()`: editor/office get both paths in one command; viewers one command per file; kdbx runs the keepass merge recipe; CLI pauses on Enter after open.
-- [x] interactive resolve should have "(q)uit" option
-  - (q)uit aborts after `N` groups, prints "aborted after N of total".
-- [x] lets improve the initial "diff" table: identical flag / larger-smaller / metadata-only
-  - columns: size, **vs base** (`=` or `≠ ↑/↓ <delta>`), **metadata** (same/diff + tag change detail), suggest; footer lists per-copy metadata verdicts for media. Office/audio compare extracted summaries; mp3 shows actual tag changes (`title: A → B`).
-- [x] add an option to printout which internal or external tool will be used for the different actions (like "(?) print tools" maybe)
-  - `(?)tools` shows kind → view tool + found/missing status + install hints for every configured tool.
-- [x] when deconflict says "metadata differs", add "(m)etadata" menu option to show common + diff fields
-  - `media.metadata_fields(path, kind, tools)` returns a field→value dict per kind (audio tags / image dims+EXIF / video streams / office content); `_print_metadata_diff` renders a table with base and copy as columns and common (dimmed) + differing fields as rows, section-separated. `(m)` reuses the meld key (mutually exclusive: meld is text-only, metadata diff is media-only).
-- [x] overview table polish: first `role` column (base / copy N), per-row differing metadata fields in the `metadata` cell (only the differing), and removed the `suggest` column.
-- [x] overview table columns: re-added `mtime`; merged size + vs-base delta into one `size` column (`3.4 MB (↓ 993 B)`); `#` column shows `#0` for base and `#N` for copies.
-- [x] numbered keep actions supporting multiple copies: menu shows `(0) keep base`, `(1) keep copy #1`, ... and the resolver already backs up all non-chosen conflicts, so any copy can be kept. (`_keep_by_number` maps `#0`→base / `#N`→copy.)
-- [x] truncate long metadata values (office XML) in the overview cell and `(m)etadata` table via `_truncate_meta` (≤70 chars + `… (+N more)`), so cell text stays readable.
-- [x] metadata diff table headers now show the file number (`#0`, `#N`) plus a truncated filename (`_meta_diff_columns`, 40 char cap), and columns use `overflow="ellipsis"` so long names truncate instead of wrapping into tall multi-line headers.
-- [x] Write CliRunner test for bare-mode interactive (monkeypatch config path, feed "s"=skip) to fix deterministically
-  - `test_bare_skips_all_groups_interactively`, quit, `?`-tools, table-flags, no-dirs guidance.
-- [x] `move_to_backup` fast path: atomic `os.replace` when same filesystem, EXDEV fallback to copy→verify→remove (resolve.py; tests green)
-- [x] important: when launching e.g. audio player (and other documents), print full file path to console, not just "launching: /usr/bin/vlc …" and I don't know what is launched
-  - `launchers._launch` now prints the whole argv with paths (space-containing args quoted); test asserts full command is shown.
-- [x] the metadata detail table should always include create time, mod time, and file size (bytes + the size we have already in the overview table including the diff)
-  - `_print_metadata_diff` renders ONE combined table titled "metadata diff": generic attrs (`size`/`created`/`modified`) + per-kind content fields in the SAME table (content section-separated). `size` row shows BOTH human-readable AND byte count (`1.2 MB (1,234,567 bytes)`) plus `(↑/↓ …)` diff vs the other file. `(m)etadata` always offered (attrs guarantee content); `_meta_capable` gate removed; `engine.supported_tools` always includes `VIEW_META`.
-  - Attr rows (`size`/`created`/`modified`) are GRAY (dim) when the two files' values are identical, plain when they differ — verified + regression test (`test_metadata_attr_rows_dim_when_identical`: equal-size pair dimmed, differing-size pair plain, via recorded Rich console).
-- [x] **enrich audio/image metadata with ExifTool**: `(m)`etadata detail for audio+image now uses `[tools].exiftool` when available (surfacing IPTC/XMP/MakerNotes + technical stream info: bitrate, sample rate, channel mode, resolution, color components, …), falling back to the lighter mutagen/PIL extractors when exiftool is absent/errors (never hard-required — AGENTS.md).
-  - `media._exiftool_fields(path, exiftool, image=)` runs `exiftool -s -j`, parses JSON, normalizes keys (`Title`→`title`, `MIMEType`→`mimeType`, `MPEGAudioVersion`→`mpegAudioVersion`), folds ImageWidth/ImageHeight into `dimensions` (image), and skips fs-noise/binary/thumbnail/maker-note/redundant fields + values >200 chars and empty values. `_content_fields` is still the ONE canonical extractor feeding BOTH the overview verdict and the diff table (consistency preserved).
-  - Tests: 4 mocked-subprocess unit tests (parse/normalize, dims merge, error→fallback, exiftool-vs-fallback in `_content_fields`). Verified against real samples (IMG now yields resolution/encoding/color-component fields; mp3 yields bitrate/sample-rate/channel-mode/duration).
-  - **Performance note:** each exiftool run is a ~0.5s subprocess, so first `analyze` (and the test suite) is slower — but `meta_fields` is computed once and cached, so repeat runs are fast. If it ever matters, batch exiftool across all files of a scan in one process (exiftool accepts multiple paths).
-- [x] when `deconflict` is running a scan, there should be some console output indicating this (and progress), when no scan is done but just cache is read, this should also be logged to console
-  - `Engine.cache_used` set when the cache file exists; `_report_scan()` prints "scanning <dirs>…" or "using cached scan (<file>)…" in scan/resolve/bare. `scan(scani.on_file=...)` hook added for future progress bars.
-- [x] the (?) action should also print a note how the tools to use can be configured (incl the config file path used)
-  - `_print_tools` footer now prints the effective config path + which TOML sections ([tools]/[file_types]/[file_types_edit]) to edit; `EngineConfig.config_path` threaded from config load.
-- [x] config file should use the standard XD... env vars (if it does not yet already)
-  - `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` honored for the default config file and cache dir (`config.py` + `engine._default_cache_dir()`).
-- [x] when view and edit commands are identical (e.g. here for me with libreoffice), only show (e)dit, and not (v)iew (pls rename `(v)open` to `(o)pen`)
-  - `Launcher.view_edit_collapse(kind)` — when VIEW and EDIT resolve to the same exe (office/editor), the menu shows only `(e)dit`. Office `(v)open` renamed `(o)pen`.
-- [x] we should improve the metadata handling in general: when scanning / analyzing, metadata should be included in result, so we don't need to re-analyze. but truncate; pls recommend how to treat embedded cover art in audio, could be large ...? -> to we have generic metadata independent of file type. so we can always have the (m)etadata action available
-  - `GroupAnalysis.meta_fields` holds full field dicts per file, computed once in `analyze_group`; CLI reads them (no re-extract on (m)). `(m)etadata` now always offered (generic attrs at minimum). **Embedded cover art**: mutagen tags with `APIC`/`PIC` frames are excluded from `_ID3_FIELDS` map, so images don't enter the summary — but to be safe, recommend truncating any large binary tag value (see follow-up; current tags map only over text frames).
-- [x] I noticed with IMG-20181122-WA0004.jpg that the overview table says "metadata same", but meta-diff returns several differences!
-  - Root cause: `metadata_equal` (via `image_summary` string) and `_image_fields` (dict) extracted differently. Unified on ONE `_content_fields(path, kind)` canonical extractor used by BOTH `metadata_equal` and the diff table — overview verdict and `(m)` rows can no longer disagree. Regression test added.
-- [x] improve metadata for office documents. could it be that it currently takes the plain xml?
-  - Yes — it dumped raw XML. Now `_office_fields()` reads `docProps/core.xml` (title/creator/lastModifiedBy/created/modified) + `_extract_office_text()` strips markup into readable paragraphs/cell text for docx/pptx/xlsx/ods (no angle-bracket soup).
-- [x] is there a char-based diff, e.g. highlight the changes within a line?
-  - `_print_text_diff` uses `SequenceMatcher` to highlight only the changed character runs within a changed line pair (`_hl_runs` + `_print_rich_line`).
-- [x] the final message of resolve still says "resolved x groups, even if some where skipped and not resolved
-  - `_run_interactive` counts resolved vs skipped; prints `resolved N group(s)` and `(M skipped)` when M>0.
-- [x] **tool-actions matrix**: separate `(v)iew` from `(e)dit` per kind; audio `(v)iew` → audio player; add `(x)edit-meta`; universal meta-diff via ExifTool `-diff`; per-kind diff defaults; default `mp3_editor` → GUI not kid3-cli. Includes launchers.py ToolTypes (VIEW/EDIT/DIFF/VIEW_META/EDIT_META), KIND_*TOOL tables, config `[file_types_edit]`, cli menu via `_actions`, rejected-tag-default choice, tests.
-  - VIEW/EDIT/DIFF/VIEW_META/EDIT_META ToolTypes exist; `KIND_VIEW/EDIT/META_EDIT_TOOL` tables keyed per kind; `tools.py` defaults prefer GUI tag editors: `mp3_editor = [kid3, easytag, picard, kid3-cli]` (kid3-cli last-resort). Menu via `_actions` exposes (v)iew/(e)dit collapsed when same exe, (d)iff, (m)etadata (always), (e)dit-meta where applicable.
-  - **Tag-editor default (decision):** keep candidate list as-is — GUI preferred, CLI fallback; end users override via `[tools].mp3_editor = "..."` and config template documents it. Not hard-coding one GUI.
-  - **Open follow-up (small, optional):** `--auto` rule set is `base|copy|newest|bigger`; the plan floated a metadata-based `meta`/`reject-meta` rule — NOT implemented (metadata verdict only gates (m)etadata availability, not auto-resolution). Defer unless requested.
-- [x] what does actually (h)keep-both do: will it rename the copies to something not matching the pattern? is or should this be interactive?
-  - Previously `Resolver.keep_both` didn't exist → AttributeError. Implemented: keeps base (untouched) and renames each conflict copy in place to `<base> (copy N).ext`, stopping it matching the pattern. Non-interactive, non-destructive, dry-run safe. (Note: renames live in the scan root rather than backup — acceptable for keep-both since nothing is discarded.)
-- [x] office diff fails: launching: /usr/bin/soffice … LibreOffice 25.8.7.3 580(Build:3) Error in option: --compare
-  - This build rejects `--compare`. `(d)iff` for office now diffs the extracted text in the terminal (`_print_office_diff`), which also works headlessly. soffice `--compare` removed from `launchers._diff_cmd`.
-- [x] the "(?)tools" action should print the tools that are run for this very specific file / file type. do not list all tools, but just the ones we use here
-  - `Launcher.tools_for(kind)` returns only the tool keys backing this kind's actions; `_print_tools` lists those (found/missing + hints) only.
-- [x] add `deconflict config tools` to show tools for each filetype, just as the (?) action does
-  - `config` became a Typer group: bare `config` still prints the effective config; `config tools [--path]` iterates all KINDS (audio/image/video/office/kdbx/text/other) using the SAME `_print_kind_tools` helper as the interactive (?)tools action (view/edit keys + found/missing + hints). Both honor root `--config` and `--path`. Extracted `_print_tools_footer`; fixed latent Rich markup bug where `[tools]`/`[file_types]` section names in the footer were swallowed as style tags (now escape()d — same class as the earlier `deconflict config` MarkupError).
-- [x] the (m)eld action should be more generic. so (d)iff is console diff per default (depending on file type), maybe "(m)erge" instead?
-  - Dropped the meld-specific text action; `(d)iff` is now the primary inline console diff (terminal for text/office). Metadata now owns hotkey `m` (`(m)etadata`), so the generic external merge would need another key — leaving external meld out of the default text menu (terminal diff + (o)pen/(e)dit cover it).
-- [x] Fix `deconflict config` MarkupError crash: paths/values containing `[`/`]` (e.g. `/tmp/p/deconf/`) were interpolated into Rich markup unescaped; escape() now wraps the final rendered string of every config body line. Fixed 2026-08-30: all 93 tests green, `uv run deconflict config` works. (Note: whole rendered line is escaped — escaping only the value is insufficient because our own literal `[...]` wrapper brackets then form a rich closing tag.)
+- [x] Fix bare `deconflict` (no args) → interactive resolve (`invoke_without_command=True` already in place)
+- [x] kind-aware actions: per-kind tool matrix; `[file_types]` config overrides; `(?)tools` found/missing + hints
+- [x] `(v)iew` opens both files in suggested app; kdbx keepass merge recipe; CLI pauses on Enter
+- [x] `(q)uit` aborts after N groups, prints "aborted after N of total"
+- [x] overview table: size + vs-base delta, metadata verdict + detail, mtime, role (`#0`/`#N`) columns
+- [x] `(?)tools` shows kind → view tool + found/missing + install hints
+- [x] `(m)etadata` menu option; `media.metadata_fields()` per kind; common (dimmed) + diff rows
+- [x] numbered keep actions for multiple copies (`_keep_by_number`)
+- [x] `_truncate_meta` (≤70 chars) for long metadata values
+- [x] metadata diff table headers show `#N` + truncated filename, `overflow="ellipsis"`
+- [x] CliRunner test for bare-mode interactive (skip all), quit, `?`-tools, table-flags, no-dirs guidance
+- [x] `move_to_backup` fast path: atomic `os.replace` same-fs, EXDEV copy→verify→remove
+- [x] launchers print full argv with paths (quoted spaces); regression test
+- [x] metadata detail table always has size/created/modified + per-kind sections; identical attr rows dimmed
+- [x] ExifTool enrichment for audio+image metadata (`_exiftool_fields`, fallback); unified `_content_fields` extractor
+- [x] scan/analyze progress hooks + "scanning/cached" console output (`Engine.cache_used`, `_report_scan`)
+- [x] `(?)tools` footer prints effective config path + which TOML sections to edit
+- [x] `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` honored (config + cache dir)
+- [x] view/edit collapse when same exe; `(o)pen` rename for office
+- [x] `GroupAnalysis.meta_fields` computed once in analyze; `(m)etadata` always offered; embedded cover art (APIC/PIC) excluded from summary fields
+- [x] unified `_content_fields` so overview verdict and `(m)` rows can't disagree (+ regression test)
+- [x] office metadata reads docProps/core.xml + stripped text (no XML soup)
+- [x] char-based diff via `SequenceMatcher` (`_hl_runs` + `_print_rich_line`)
+- [x] final summary counts resolved vs skipped (`resolved N group(s)`, `(M skipped)`)
+- [x] tool-actions matrix: VIEW/EDIT/DIFF/VIEW_META/EDIT_META, KIND_*TOOL tables, `[file_types_edit]`, `(x)edit-meta`
+- [x] `(h)keep-both` implemented (renames copies to `<base> (copy N).ext`, non-destructive, dry-run safe)
+- [x] office `(d)iff` = extracted-text terminal diff (soffice `--compare` removed after build error)
+- [x] `Launcher.tools_for(kind)` only for this kind's actions; `deconflict config tools` subcommand
+- [x] meld-specific text action dropped; `(d)iff` = inline console diff; `(m)etadata` owns hotkey `m`
+- [x] Fix `deconflict config` MarkupError crash (escape() entire rendered line)
+- [x] Fix latches: `metadata table header truncation` start-only → also keep conflict-pattern tail (`start…tail`); `full paths` in group print (see next batch — moved to 2026-09-01 batch)
+
+## Next batch (2026-09-01) — grouped, dependency-ordered
+New TODO items added by user on main. Ordering rationale: CLI essentials first (cheap, independent),
+then table rendering polish (contained), then the interactive-flow revamp (biggest UX change, feeds
+recommendation), then launcher/flow fixes, then auto-recommended (depends on recommendation), then
+setup command, then performance/architecture investigation (design-first, writes an architectural
+proposal), then office-diff research (deliverable = researched note + feasible implementation).
+
+### G1 — CLI essentials (quick wins)
+- [ ] `--version` option and/or `version` command
+- [ ] print FULL paths of files per group; highlight the base scan-start dir so the sync origin is visible
+- [ ] `--progress` option for scan; enabled by default when interactive (TTY), off when piped/scripted
+
+### G2 — table rendering polish (contained, render-side)
+- [ ] `_meta_diff_columns` truncation keeps `start…tail` so the conflict-pattern suffix stays visible
+- [ ] metadata compare table: newer dates highlighted, larger sizes highlighted/bold
+
+### G3 — interactive flow revamp (primary UX)
+- [ ] drop the initial overview table; show the metadata compare table as the primary per-group view; remove the separate `(m)etadata` action; long filenames wrap; add a row for identical/changed content (brief diff)
+- [ ] recommendation: when clear winner exists (all identical → base; one strictly-newer → that one), print a "recommend keep X" line + offer it as a default action
+
+### G4 — launcher & menu fixes
+- [ ] non-blocking external launches (open/edit/diff must not freeze the menu; user goes straight back to actions)
+- [ ] ODT bug: edit action opens only the copy, not both files
+- [ ] actions clarity: open/edit (when different apps) → open all files; text diff; external diff; external merge; `(?)` shows what's missing + recommendations for the current kind/setup
+
+### G5 — auto-recommended
+- [ ] `--auto recommended`: resolve groups with a clear recommendation, skip the rest; print stats + hint to rerun `deconflict resolve` (no `--auto`) for skipped; cache invalidated at end so no extra scan needed
+
+### G6 — setup command
+- [ ] `deconflict setup`: analyze local setup, recommend installs (tools detection + INSTALL_HINTS), print how-to
+
+### G7 — performance & architecture (investigation + proposal)
+- [ ] investigate slow startup with 62 cached groups: add stage timing/log output (scan/analyze/render), verify read-once semantics
+- [ ] architectural proposal: 3-stage pipeline (scan FS → read metadata → resolve) with parallel workers + optional `fd` backend; document in plan, stub interfaces if feasible
+
+### G8 — office diff research
+- [ ] research office-format diff tools (text-conversion + GUI diff) and implement the feasible part
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
 - Future: Textual TUI, PySide GUI.
 - Office metadata: parse docx/xlsx/ods XML (document.xml/sharedStrings/content.xml) into real per-field metadata (text runs, cell values) instead of raw truncated XML — see metadata fields item above; also lets the `(m)etadata` table show meaningful common/diff rows for office.
