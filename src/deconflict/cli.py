@@ -318,6 +318,7 @@ def resolve(
 
 @app.command()
 def tui(
+    ctx: typer.Context,
     dirs: list[Path] = typer.Argument(None, help="Directories (default: config)"),
     pattern: str | None = typer.Option(None, "--pattern", help="One pattern group"),
     config: Path | None = typer.Option(None, "--config", help="Alternate config file"),

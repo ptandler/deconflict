@@ -24,12 +24,12 @@ class GroupTable(DataTable):
     selection; mouse clicks arrive as native RowSelected.
     """
 
-    def __init__(self) -> None:
-        super().__init__(cursor_type="row", zebra_stripes=True)
+    def __init__(self, id: str | None = None) -> None:
+        super().__init__(id=id, cursor_type="row", zebra_stripes=True)
         self._row_keys: dict[str, object] = {}  # group.key -> RowKey
 
     def on_mount(self) -> None:
-        self.add_column("", width=1)
+        self.add_column("", key="marker", width=2)
         self.add_column("group (base)", key="base")
         self.add_column("pattern", key="pattern", width=12)
         self.add_column("#", key="nfiles", width=3)
@@ -49,18 +49,18 @@ class GroupTable(DataTable):
             marker, style = "▸", "dim"
         else:
             marker, style = " ", ""
-        self.update_cell(row_key, 0, Text(marker, style=style), update_width=False)
+        self.update_cell(row_key, "marker", Text(marker, style=style), update_width=False)
         # Re-colour the base-name column so the whole row reads as done.
         base = self.get_row(row_key)[1]
         if isinstance(base, str):
-            self.update_cell(row_key, 1, Text(base, style=style), update_width=False)
+            self.update_cell(row_key, "base", Text(base, style=style), update_width=False)
 
 
 class FilesTable(DataTable):
     """Right pane 'Files' tab: the metadata-format table for the selected group."""
 
-    def __init__(self) -> None:
-        super().__init__(cursor_type="row", zebra_stripes=True)
+    def __init__(self, id: str | None = None) -> None:
+        super().__init__(id=id, cursor_type="row", zebra_stripes=True)
 
     def on_mount(self) -> None:
         self.add_column("#", key="num", width=4)
@@ -73,7 +73,7 @@ class FilesTable(DataTable):
         self.clear(columns=False)
         self.add_row("", "[dim]no group selected[/dim]", "", "", "", key="empty")
 
-    def show(self, ga: "GroupAnalysis") -> None:
+    def show(self, ga: GroupAnalysis) -> None:
         self.clear(columns=False)
         rows: list[tuple] = ([(ga.base, None)] if ga.base else []) + [
             (c, i) for i, c in enumerate(ga.copies)
@@ -84,7 +84,9 @@ class FilesTable(DataTable):
                 meta = "—"
             elif idx < len(ga.meta):
                 md = ga.meta[idx]
-                meta = "—" if md is None else "[green]same[/green]" if md else "[yellow]diff[/yellow]"
+                meta = (
+                    "—" if md is None else "[green]same[/green]" if md else "[yellow]diff[/yellow]"
+                )
             else:
                 meta = "—"
             size = human(a.info.size)
@@ -113,8 +115,8 @@ def _fmt_dt(t: float) -> str:
 class DiffView(VerticalScroll):
     """Right pane 'Diff' tab: shows a Rich renderable (text diff / metadata table)."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, id: str | None = None) -> None:
+        super().__init__(id=id)
         self._title: Static | None = None
         self._static: Static | None = None
 

@@ -68,10 +68,10 @@ class DeconflictApp(App):
 
     BINDINGS = [
         ("q", "quit_app", "Quit"),
-        ("tab", "cycle_tab", "Files/Diff/Log"),
+        ("ctrl+t", "cycle_tab", "Files/Diff/Log"),
     ]
 
-    def __init__(self, engine: "Engine", groups: list[tuple["ConflictGroup", "GroupAnalysis"]]):
+    def __init__(self, engine: Engine, groups: list[tuple[ConflictGroup, GroupAnalysis]]):
         super().__init__()
         self.engine = engine
         self.groups = groups
@@ -80,6 +80,7 @@ class DeconflictApp(App):
         self.resolved = 0
         self.skipped = 0
         self.action_map: dict[str, ActionEntry] = {}
+        self._action_seq = 0  # monotonically increasing button-id counter
 
     # -- lifecycle ----------------------------------------------------------
     def on_mount(self) -> None:
@@ -118,29 +119,17 @@ class DeconflictApp(App):
         index = max(0, min(index, len(self.groups) - 1))
         self.current_index = index
         group, ga = self.groups[index]
-        grouptable = self.query_one("#groups", GroupTable)
-        row = grouptable.rows.get(group.key)
-        if row is not None:
-            self._set_cursor_to(group.key)
+        self.query_one("#groups", GroupTable).move_cursor(row=index)
         self.query_one("#files", FilesTable).show(ga)
         self._show_default_diff(group, ga)
-        self.log_view().write(f"[bold]— group {index + 1}/{len(self.groups)}: "
-                              f"{group.base.name if group.base else group.key}[/bold]")
+        self.log_view().write(
+            f"[bold]— group {index + 1}/{len(self.groups)}: "
+            f"{group.base.name if group.base else group.key}[/bold]"
+        )
         self._render_actions(group, ga)
         self._update_subtitle()
 
-    def _set_cursor_to(self, key: str) -> None:
-        grouptable = self.query_one("#groups", GroupTable)
-        rows = grouptable.rows
-        ordered = list(rows.order)
-        if key in ordered:
-            idx = ordered.index(key)
-            try:
-                grouptable.move_cursor(row=idx)
-            except Exception:
-                pass
-
-    def _show_default_diff(self, group: "ConflictGroup", ga: "GroupAnalysis") -> None:
+    def _show_default_diff(self, group: ConflictGroup, ga: GroupAnalysis) -> None:
         """Prime the Diff tab with the metadata table for the selected group."""
         diff = self.query_one("#diff", DiffView)
         if ga.base is not None and ga.copies:
@@ -160,15 +149,17 @@ class DeconflictApp(App):
                     break
 
     # -- action bar ---------------------------------------------------------
-    def _render_actions(self, group: "ConflictGroup", ga: "GroupAnalysis") -> None:
+    def _render_actions(self, group: ConflictGroup, ga: GroupAnalysis) -> None:
         box = self.query_one("#actions", HorizontalScroll)
         box.remove_children()
         self.action_map = {}
         entries = build_actions(self.engine, ga)
         for i, entry in enumerate(entries):
-            btn = Button(f"({entry.hotkey}) {entry.label}", id=f"act-{i}")
+            self._action_seq += 1
+            btn_id = f"act-{self._action_seq}-{i}"
+            btn = Button(f"({entry.hotkey}) {entry.label}", id=btn_id)
             btn.variant = self._button_variant(entry.kind)
-            self.action_map[f"act-{i}"] = entry
+            self.action_map[btn_id] = entry
             box.mount(btn)
 
     @staticmethod
@@ -190,9 +181,6 @@ class DeconflictApp(App):
         entry = self.action_map.get(event.button.id)
         if entry is not None:
             self.dispatch(entry)
-            if entry.kind not in ("tool", QUIT, "term_diff", "office_diff", "meta_view"):
-                # a final decision -> re-render remaining actions for the next group
-                self._render_actions_after_decision()
 
     # -- keyboard parity with the CLI menu ----------------------------------
     def on_key(self, event) -> None:
@@ -204,8 +192,6 @@ class DeconflictApp(App):
             if entry.hotkey.lower() == key:
                 event.stop()
                 self.dispatch(entry)
-                if entry.kind not in ("tool", QUIT, "term_diff", "office_diff", "meta_view"):
-                    self._render_actions_after_decision()
                 return
 
     def action_quit_app(self) -> None:
@@ -246,7 +232,7 @@ class DeconflictApp(App):
         elif entry.kind == "tool" and entry.tool is not None:
             self._launch_tool(group, ga, entry.tool)
 
-    def apply_resolve(self, action: Action, group: "ConflictGroup", ga: "GroupAnalysis") -> None:
+    def apply_resolve(self, action: Action, group: ConflictGroup, ga: GroupAnalysis) -> None:
         log = self.log_view()
         log.write(f"[bold yellow]applying {action.kind.value}…[/bold yellow]")
         resolved = self.engine.apply(group, ga, action)
@@ -272,17 +258,10 @@ class DeconflictApp(App):
                 self._select_index(i)
                 return
         # all groups decided
-        self.log_view().write(
-            f"[bold green]all {len(self.groups)} group(s) decided[/bold green]"
-        )
+        self.log_view().write(f"[bold green]all {len(self.groups)} group(s) decided[/bold green]")
         self._update_subtitle(force_done=True)
 
-    def _render_actions_after_decision(self) -> None:
-        # after a decision we've advanced; re-render actions for the new current group
-        group, ga = self.groups[self.current_index]
-        self._render_actions(group, ga)
-
-    def _render_diff(self, kind: str, group: "ConflictGroup", target: Path | None) -> None:
+    def _render_diff(self, kind: str, group: ConflictGroup, target: Path | None) -> None:
         diff = self.query_one("#diff", DiffView)
         if target is None:
             diff.show_renderable(kind, "[yellow]nothing to diff[/yellow]")
@@ -310,7 +289,7 @@ class DeconflictApp(App):
                 diff.show_renderable("office diff (extracted text)", "[dim]no diff[/dim]")
         self._activate("tab-diff")
 
-    def _render_meta(self, ga: "GroupAnalysis") -> None:
+    def _render_meta(self, ga: GroupAnalysis) -> None:
         diff = self.query_one("#diff", DiffView)
         if ga.base is not None and ga.copies:
             table = metadata_diff_table(ga, 0)
@@ -320,7 +299,7 @@ class DeconflictApp(App):
         self._activate("tab-diff")
 
     @work(thread=True)
-    def _launch_tool(self, group: "ConflictGroup", ga: "GroupAnalysis", tool: ToolType) -> None:
+    def _launch_tool(self, group: ConflictGroup, ga: GroupAnalysis, tool: ToolType) -> None:
         target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
         if target is None:
             self.call_from_thread(self._log, "[yellow]nothing to open[/yellow]")
@@ -351,4 +330,3 @@ class DeconflictApp(App):
                 f"{self.current_index + 1}/{total} | {self.resolved} resolved · "
                 f"{self.skipped} skipped"
             )
-

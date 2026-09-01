@@ -11,12 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .actions import actions_for
+from ..actions import actions_for
+from ..launchers import ToolType
 
 if TYPE_CHECKING:
     from ..analyze import GroupAnalysis
     from ..engine import Engine
-    from ..launchers import ToolType
 
 
 # Resolution / lifecycle kinds handled directly by the app (not a ToolType).
@@ -36,12 +36,12 @@ class ActionEntry:
     hotkey: str
     label: str
     kind: str
-    tool: "ToolType | None" = None  # set when kind is an external ToolType
+    tool: ToolType | None = None  # set when kind is an external ToolType
     target_index: int | None = None  # 0-based copy index for KEEP_COPY
     extra: object = field(default=None, repr=False)
 
 
-def build_actions(engine: "Engine", ga: "GroupAnalysis") -> list[ActionEntry]:
+def build_actions(engine: Engine, ga: GroupAnalysis) -> list[ActionEntry]:
     """Ordered action entries for the current group's kind + resolution choices."""
     entries: list[ActionEntry] = []
     if ga.base is not None:
@@ -51,9 +51,9 @@ def build_actions(engine: "Engine", ga: "GroupAnalysis") -> list[ActionEntry]:
     entries.append(ActionEntry("h", "keep-both", KEEP_BOTH))
     entries.append(ActionEntry("s", "skip", SKIP))
     for hotkey, label, tool in actions_for(engine, ga):
-        if isinstance(tool, str):  # inline tag
-            entries.append(ActionEntry(hotkey, label, tool))
-        else:
+        if isinstance(tool, ToolType):  # ToolType is a str-Enum; check it FIRST
             entries.append(ActionEntry(hotkey, label, "tool", tool=tool))
+        else:  # inline tag (term_diff / office_diff / meta_view)
+            entries.append(ActionEntry(hotkey, label, str(tool)))
     entries.append(ActionEntry("q", "quit", QUIT))
     return entries
