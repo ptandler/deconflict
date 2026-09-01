@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime
 import difflib
+import os
+import sys
 from pathlib import Path
 
 import typer
@@ -11,6 +13,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from . import __version__
 from .analyze import GroupAnalysis
 from .cache import clean_cache
 from .config import Config, default_path, load, write_init_config
@@ -18,7 +21,7 @@ from .engine import Action, ActionKind, Engine
 from .launchers import ToolType
 from .media import ATTR_CREATED, ATTR_MODIFIED, ATTR_SIZE, KINDS, META_ATTR_FIELDS
 from .patterns import build_patterns
-from .scan import ConflictGroup
+from .scan import ConflictGroup, ScanResult
 
 app = typer.Typer(
     help="Resolve 'conflicted copy'-style sync conflict files. No args = interactive resolve.",
@@ -44,6 +47,46 @@ def _cfg(config_path: Path | None, pattern: str | None, dirs: list[Path]) -> Con
         cfg.engine.enabled_patterns = [pattern]
     cfg.engine.dirs = dirs or cfg.engine.dirs
     return cfg
+
+
+def _version_cb(value: bool) -> None:
+    if value:
+        console.print(f"deconflict {__version__}")
+        raise typer.Exit()
+
+
+@app.command("version")
+def version_command() -> None:
+    """Show the deconflict version."""
+    console.print(f"deconflict {__version__}")
+
+
+def _path_cell(engine: Engine, path: Path) -> str:
+    """Absolute path with the scan-start root highlighted (sync origin stays visible).
+
+    `path` is resolved and rendered as `[bold cyan]<scan-root>/[/bold cyan]<rest>`
+    so a quick glance shows which sync directory produced the conflict.
+    """
+    full = str(path.resolve())
+    for root in engine.cfg.dirs:
+        r = str(Path(root).expanduser().resolve())
+        if full == r or full.startswith(r + os.sep):
+            rest = full[len(r) + len(os.sep) :]
+            return f"[bold cyan]{escape(r + os.sep)}[/bold cyan]{escape(rest)}"
+    return escape(full)
+
+
+def _scan_with_progress(
+    engine: Engine, show_progress: bool, label: str | None = None
+) -> ScanResult:
+    """Engine.scan() wrapped in a Rich progress bar when requested (else plain scan)."""
+    if not show_progress:
+        return engine.scan()
+    from rich.progress import Progress
+
+    with Progress() as p:
+        task = p.add_task(label or "scanning", total=None)
+        return engine.scan(on_file=lambda _f: p.advance(task))
 
 
 def _require_dirs(cfg: Config) -> Engine:
@@ -108,20 +151,31 @@ def _truncate_meta(value: str, limit: int = _META_CELL_MAX) -> str:
 @app.callback()
 def _root(
     ctx: typer.Context,
+    version: bool = typer.Option(
+        False, "--version", callback=_version_cb, help="Show version and exit"
+    ),
     config: Path | None = typer.Option(None, "--config", help="Alternate config file"),
 ) -> None:
     """Run interactive resolve when invoked with no subcommand."""
     ctx.obj = config
     if ctx.invoked_subcommand is None:
-        engine, groups = _collect_groups(None, [], config)
+        engine, groups = _collect_groups(None, [], config, show_progress=None)
         _run_interactive(engine, groups)
         _invalidate_cache(engine)
 
 
-def _collect_groups(pattern: str | None, dirs: list[Path], config_path: Path | None = None):
+def _collect_groups(
+    pattern: str | None,
+    dirs: list[Path],
+    config_path: Path | None = None,
+    show_progress: bool | None = None,
+):
+    """Scan + analyze; `engine` is returned so callers can invalidate the cache."""
     engine = _require_dirs(_cfg(config_path, pattern, dirs))
     _report_scan(engine)
-    result = engine.scan()
+    result = _scan_with_progress(
+        engine, sys.stdout.isatty() if show_progress is None else show_progress
+    )
     if not result:
         console.print("[green]no conflicts found[/green]")
         raise typer.Exit(0)
@@ -236,6 +290,11 @@ def scan(
     config: Path | None = typer.Option(None, "--config", help="Alternate config file"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable file cache"),
     refresh: bool = typer.Option(False, "--refresh", help="Force full rescan"),
+    progress: bool | None = typer.Option(
+        None,
+        "--progress/--no-progress",
+        help="Show scan progress (default: auto — on when interactive)",
+    ),
 ) -> None:
     """Scan directories and list unresolved conflict groups. Exits after printing."""
     engine = _require_dirs(_cfg(ctx.obj or config, pattern, dirs))
@@ -243,13 +302,14 @@ def scan(
         engine.cache.clear()
         engine.cache_used = False
     _report_scan(engine)
-    result = engine.scan()
+    result = _scan_with_progress(engine, sys.stdout.isatty() if progress is None else progress)
     if not result:
         console.print("[green]no conflicts found[/green]")
         raise typer.Exit(0)
     table = Table("group", "pattern", "files")
     for g in result.groups:
-        table.add_row(g.base.name if g.base else g.key, g.pattern, str(len(g.files)))
+        name = _path_cell(engine, g.base) if g.base else g.key
+        table.add_row(name, g.pattern, str(len(g.files)))
     console.print(table)
     console.print(
         f"[cyan]{len(result.groups)}[/cyan] conflict group(s). Run `deconflict resolve` to act."
@@ -304,6 +364,11 @@ def resolve(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview without touching the filesystem"
     ),
+    progress: bool | None = typer.Option(
+        None,
+        "--progress/--no-progress",
+        help="Show scan progress (default: auto — on when interactive)",
+    ),
 ) -> None:
     """Resolve conflicts. Losers move to backup (never hard-deleted). --auto = non-interactive."""
     cfg = _cfg(ctx.obj or config, pattern, dirs)
@@ -311,7 +376,7 @@ def resolve(
         cfg.engine.dry_run = True
     engine = _require_dirs(cfg)
     _report_scan(engine)
-    result = engine.scan()
+    result = _scan_with_progress(engine, sys.stdout.isatty() if progress is None else progress)
     if not result:
         console.print("[green]no conflicts to resolve[/green]")
         raise typer.Exit(0)
@@ -414,7 +479,7 @@ def _show_group(
                     meta += "\n" + "\n".join(f"[dim]{d}[/dim]" for d in differ)
         table.add_row(
             num,
-            a.path.name,
+            _path_cell(engine, a.path),
             _size_cell(ga, a, idx),
             _fmt_mtime(a.info.mtime),
             meta,

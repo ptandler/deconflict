@@ -145,13 +145,14 @@ recommendation), then launcher/flow fixes, then auto-recommended (depends on rec
 setup command, then performance/architecture investigation (design-first, writes an architectural
 proposal), then office-diff research (deliverable = researched note + feasible implementation).
 
-### G1 — CLI essentials (quick wins)
-- [ ] `--version` option and/or `version` command
-- [ ] print FULL paths of files per group; highlight the base scan-start dir so the sync origin is visible
-- [ ] `--progress` option for scan; enabled by default when interactive (TTY), off when piped/scripted
+### G1 — CLI essentials (quick wins) ✅ done
+- [x] `--version` option and/or `version` command — both: `--version` flag (root callback) + `version` command; prints `deconflict 0.1.0` from `__init__.__version__`
+- [x] print FULL paths of files per group; highlight the base scan-start dir so the sync origin is visible — `_path_cell()` renders `<scan-root>/<rest>` with the root in bold cyan; used in scan table + group table
+- [x] `--progress` option for scan; enabled by default when interactive (TTY), off when piped/scripted — `--progress/--no-progress` on `scan`+`resolve`+bare; default `None` → `sys.stdout.isatty()`; wraps `engine.scan(on_file=...)` in a Rich Progress bar (indeterminate, `total=None`)
+- Result: 4 new CLI tests; `mise run check` green (100 passed); committed on `feature/todo-batch`
 
 ### G2 — table rendering polish (contained, render-side)
-- [ ] `_meta_diff_columns` truncation keeps `start…tail` so the conflict-pattern suffix stays visible
+- [x] `_meta_diff_columns` truncation keeps `start…tail` so the conflict-pattern suffix stays visible — already implemented on main (`_truncate_name` + `_META_HEADER_TAIL`); plan checkbox was stale
 - [ ] metadata compare table: newer dates highlighted, larger sizes highlighted/bold
 
 ### G3 — interactive flow revamp (primary UX)

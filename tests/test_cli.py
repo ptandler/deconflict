@@ -378,3 +378,32 @@ def test_metadata_attr_rows_dim_when_identical(sample_dir, tmp_path):
     assert is_dim(size_row(render(by_base["same.txt"])))
     # differing bytes -> size row plain
     assert not is_dim(size_row(render(by_base["diff.txt"])))
+
+
+def test_version_flag():
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "deconflict 0.1.0"
+
+
+def test_version_command():
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "deconflict 0.1.0"
+
+
+def test_scan_shows_full_paths(sample_dir):
+    """G1: scan table must print full file paths (not just basenames)."""
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-progress"])
+    assert result.exit_code == 0
+    resolved = str(sample_dir.resolve())
+    assert resolved in result.stdout
+    # basename-only output would not contain the parent dir
+    assert "conflict group(s)" in result.stdout
+
+
+def test_scan_progress_flag_forced(sample_dir):
+    """G1: --progress forces the progress bar even when stdout is not a TTY."""
+    result = runner.invoke(app, ["scan", str(sample_dir), "--progress"])
+    assert result.exit_code == 0
+    assert "conflict group(s)" in result.stdout
