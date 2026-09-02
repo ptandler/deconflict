@@ -21,13 +21,14 @@ dependencies = [
     "rich>=13",
     "mutagen>=1.47",
     "pillow>=10",
+    "textual>=0.80"
 ]
 
 [project.optional-dependencies]
 dev = ["ruff>=0.6", "pytest>=8"]
 
 [project.scripts]
-deconflict = "deconflict.cli:app"
+deconflict = "deconflict.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deconflict"]

@@ -10,7 +10,7 @@ Syncthing `.sync-conflict-*`. Generic, pattern-driven, future TUI/GUI-ready.
 ## Decisions (agreed)
 - Name: **deconflict** (PyPI + command + module). Package runs from any dir; repo dir will be renamed (rename happens on restart).
 - Stack: Python >=3.11 (dev 3.13) · Typer (CLI) · Rich (colors/progress/live) · ruff (lint+format) · pytest · hatchling · uv + mise · GitHub Actions (MIT).
-- Logic UI-free in `engine.py` → later Textual TUI (`tui` subcommand) / PySide GUI reuse it.
+- Logic UI-free in `engine.py` → Textual TUI via bare `deconflict` (auto, if `textual` installed) or `resolve --tui`; PySide GUI would reuse it too.
 - Patterns shipped: `nextcloud` (on, disable-able), `pacman`, `syncthing` (on). `dpkg`, `rpm`, `windows-copy` shipped disabled. Custom regex patterns in config.
 - Disposal: NEVER hard-delete. Losers **moved** to backup dir OUTSIDE scan roots (`~/deconflict-backups/...`), configurable. `--dry-run` must not touch FS. JSONL decision log.
 - KeePass: `.kdbx` → recipe launching `keepassxc-cli merge` (dry-run preview → real merge → discard copy). Verified: keepassxc-cli 2.7.12 `merge database database2`.
@@ -33,7 +33,9 @@ Infra      paths.py tools.py config.py(TOML) patterns.py scan.py analyze.py
 Command model (mirrors git/gh/uv):
 - `deconflict scan` — explicit, single-purpose, scriptable, exits
 - `deconflict resolve --auto <rule>` — explicit, non-interactive, exits
-- `deconflict resolve` / `deconflict` — **interactive driver that internally calls scan + resolve**
+- `deconflict resolve` — interactive CLI driver (scan + resolve)
+- `deconflict resolve --tui` — interactive TUI driver (`--no-tui` forces CLI; `--auto` + `--tui` is an error)
+- `deconflict` (bare) — interactive driver (**TUI when `textual` installed, else CLI**), internally calls scan + resolve
 - `deconflict patterns | init-config`
 - `deconflict config [--path FILE]` — print the effective config (like `mise config`)
 - `--config FILE` option (on scan/resolve + bare) to point at an alternate config file
@@ -109,6 +111,10 @@ Install (`uv tool install .` / pipx) · usage examples · patterns table · conf
 - [x] Fix bare `deconflict` (no args) → interactive resolve
   - Root cause: bare mode had no config signal — with no config file there are no `default_dirs`, so it correctly reported "no directories" (exit 2) but without guidance. `invoke_without_command=True` was already in place.
   - CliRunner tests prove bare mode runs the interactive loop (config with dirs + skip), (q)uit aborts cleanly, and the no-config case now prints `init-config` guidance (exit 2).
+- [x] bare `deconflict /path/` → scan + resolve + TUI (when textual installed) or CLI loop
+  - `main()` intercepts argv where the first non-option token is not a known subcommand, routes to `_bare_resolve(config, dirs)` — bypassing Typer's subcommand parser which would misread the path as a command name. pyproject entry point changed from `app` to `main`. 111 tests green.
+- [x] remove `tui` subcommand → `--tui/--no-tui` on `resolve`; bare mode auto-selects TUI when textual installed
+  - `_tui_available()` + `_launch_tui()` extracted as helpers in cli.py. `--auto` + `--tui` = error (exit 2). Bare mode auto-picks TUI. Tests: `force_cli` fixture for existing bare-mode CLI tests; 5 new TUI-selection tests + 3 `main()` entry-point tests.
 - [x] our simple resolve CLI should offer only actions supported for current file type or at least mark those that are supported. in the config we should configure the actions for each file type, e.g. which tool to use. it should also have recommendations for external tools to install (and ideally suggest a mise comment to do so)
   - `media.file_kind()` classifies groups (audio/image/video/office/kdbx/text/other); config `[file_types]` overrides which `[tools]` entry opens each kind; menu letters (d/m/e) only render for text, office/keepass folded into (v)iew.
   - `(?)tools` prints found/missing with install hints (INSTALL_HINTS in tools.py). (mise comment idea noted — these are OS app tools, hints give apt/brew.)
