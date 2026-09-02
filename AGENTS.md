@@ -1,6 +1,6 @@
 # AGENTS.md — deconflict
 
-Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `.pacnew/.pacsave/.pacorig`, Syncthing `.sync-conflict-*`). CLI = Typer + Rich; core logic is UI-free so a future Textual TUI / PySide GUI can reuse it.
+Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `.pacnew/.pacsave/.pacorig`, Syncthing `.sync-conflict-*`). CLI = Typer + Rich, TUI = Textual (optional extra); core logic is UI-free so a PySide GUI could reuse it too.
 
 ## Main plan
 Read `.opencode/plans/2026-08-30-deconflict.md` first — it contains the decisions, structure, behavior, and current todo list. This file is the quick reference for conventions.
@@ -19,15 +19,17 @@ mise run check               # lint + format-check + pytest (CI does same)
 
 ## Layout
 ```
-src/deconflict/  cli.py(typer) core.py(loop) scan.py patterns.py analyze.py
-                 media.py resolve.py cache.py tools.py paths.py
+src/deconflict/  cli.py(typer) engine.py(UI-free) scan.py patterns.py analyze.py
+                 media.py resolve.py cache.py tools.py paths.py launchers.py config.py
+                 render.py(Rich renderables) actions.py(shared action matrix)
+                 tui/   app.py views.py actions.py (Textual, optional)
 tests/           pytest; fixtures = COPIES of "sample files/" in tmpdir — never write into "sample files/"
-.opencode/plans/ project plans
+.opencode/plans/ project plans (main plan + tui-specific plan)
 ```
 
 ## Conventions
 - Type hints everywhere; `from __future__ import annotations`; line length 100 (ruff).
-- One concern per module. Never import Rich/Typer in non-UI modules (`core.py` must stay UI-free).
+- One concern per module. Never import Rich/Typer in non-UI modules (`engine.py` must stay UI-free).
 - New conflict format: add matcher in `patterns.py` + entry in `PATTERNS`. Custom regex via config.
 - Loser semantics: Nextcloud copy = local changes, base = server version. Pacman `.pacnew` = new upstream winner. Keep generic (pattern declares base/winner).
 - Destructive ops ONLY via `resolve.py::Resolver.move_to_backup()` → backup OUTSIDE scan roots; never `os.remove`. `--dry-run` must not touch the filesystem.

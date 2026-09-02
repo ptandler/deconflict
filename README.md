@@ -34,18 +34,19 @@ Then you can simply do `deconflict` and resolve conflicts one by one.
 TODO: check if complete and correct
 
 ```sh
-deconflict                      # run `scan` and `resolve`
-deconflict scan                 # scan configured dirs, list conflict groups, exit
-deconflict scan ~/Sync          # scan a specific dir recursively
+deconflict                            # run `scan` and `resolve` andn start TUI (unless --no-tui)
+deconflict scan                       # scan configured dirs, list conflict groups, exit
+deconflict scan ~/Sync                # scan a specific dir recursively
 deconflict scan --pattern nextcloud   # restrict to one pattern group
-deconflict resolve              # interactive per-group resolution
+deconflict resolve                    # interactive per-group resolution
+deconflict resolve --tui              # interactive TUI
 deconflict resolve --auto newest      # non-interactive: base|copy|newest|bigger
-deconflict resolve --dry-run    # preview without touching the filesystem
-deconflict init-config          # write ~/.config/deconflict/config.toml
-deconflict config               # show active config
-deconflict config tools         # show active config
-deconflict patterns             # list recognized conflict patterns
-deconflict --help               # all commands & options
+deconflict resolve --dry-run          # preview without touching the filesystem
+deconflict init-config                # write ~/.config/deconflict/config.toml
+deconflict config                     # show active config
+deconflict config tools               # show active config for tools
+deconflict patterns                   # list recognized conflict patterns
+deconflict --help                     # all commands & options
 ```
 
 ## Patterns

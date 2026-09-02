@@ -46,6 +46,20 @@ def samples_map(sample_dir: Path) -> dict[str, Path]:
     return {p.name: p for p in sample_dir.iterdir() if p.is_file()}
 
 
+@pytest.fixture
+def force_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare-mode tests exercise the CLI loop, not the Textual TUI.
+
+    The dev environment installs the optional `tui` extra, so bare `deconflict`
+    would otherwise launch the TUI. Tests that verify the CLI interactive loop
+    opt into this fixture (which stubs `_tui_available`); tests that verify the
+    TUI selection themselves override `_tui_available`/`_launch_tui`.
+    """
+    import deconflict.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: False)
+
+
 def pytest_sessionfinish(session, exitstatus) -> None:
     """After all tests, prune the shared default cache of dead-dir entries.
 
