@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
@@ -112,12 +113,17 @@ def _root(
     """
     ctx.obj = config
     if ctx.invoked_subcommand is None:
-        engine, groups = _collect_groups(None, [], config)
-        if _tui_available():
-            _launch_tui(engine, groups)
-        else:
-            _run_interactive(engine, groups)
-        _invalidate_cache(engine)
+        _bare_resolve(config, [])
+
+
+def _bare_resolve(config: Path | None, dirs: list[Path]) -> None:
+    """Bare `deconflict [dirs]`: scan + resolve, auto-selecting TUI when available."""
+    engine, groups = _collect_groups(None, dirs, config)
+    if _tui_available():
+        _launch_tui(engine, groups)
+    else:
+        _run_interactive(engine, groups)
+    _invalidate_cache(engine)
 
 
 def _collect_groups(pattern: str | None, dirs: list[Path], config_path: Path | None = None):
@@ -667,7 +673,42 @@ def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
     _print_tools_footer(cfg_path)
 
 
+_TOP_LEVEL_COMMANDS = frozenset({"patterns", "init-config", "config", "scan", "cache", "resolve"})
+
+
 def main() -> None:
+    argv = sys.argv[1:]
+    # Bare `deconflict /path/...`: a positional directory appears where a
+    # subcommand name would go. Typer would misread the path as a command
+    # name, so detect it and dispatch straight to the bare interactive driver
+    # (auto-TUI + resolve). Known subcommands / leading options are untouched.
+    first_dirs_idx = None
+    for i, a in enumerate(argv):
+        if a.startswith("-"):
+            continue
+        if a in _TOP_LEVEL_COMMANDS:
+            first_dirs_idx = None
+            break
+        first_dirs_idx = i
+        break
+    if first_dirs_idx is not None:
+        config: Path | None = None
+        dirs: list[Path] = []
+        i = 0
+        while i < len(argv):
+            a = argv[i]
+            if a == "--config":
+                if i + 1 >= len(argv):
+                    raise typer.BadParameter("--config requires a value")
+                config = Path(argv[i + 1])
+                i += 2
+                continue
+            if a.startswith("-"):
+                raise typer.BadParameter(f"unknown option for bare invocation: {a}")
+            dirs.append(Path(a))
+            i += 1
+        _bare_resolve(config, dirs)
+        return
     app()
 
 

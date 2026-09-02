@@ -28,7 +28,7 @@ dependencies = [
 dev = ["ruff>=0.6", "pytest>=8"]
 
 [project.scripts]
-deconflict = "deconflict.cli:app"
+deconflict = "deconflict.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deconflict"]

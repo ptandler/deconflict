@@ -103,6 +103,62 @@ def test_resolve_no_tui_forces_cli_loop(sample_dir, tmp_path, monkeypatch):
     assert "resolved 0 group(s) (6 skipped)" in result.stdout
 
 
+def test_main_bare_with_dir_launches_tui(sample_dir, monkeypatch, capsys):
+    """`deconflict <dir>` (entry point) runs the bare driver against that dir."""
+    import sys
+
+    import deconflict.cli as cli_mod
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(sys, "argv", ["deconflict", str(sample_dir)])
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
+    monkeypatch.setattr(
+        cli_mod, "_launch_tui", lambda engine, groups: calls.append((engine, groups))
+    )
+    cli_mod.main()
+    assert len(calls) == 1
+    engine, groups = calls[0]
+    assert len(groups) == 6
+
+
+def test_main_subcommand_still_dispatches(sample_dir, monkeypatch, capsys):
+    """`main()` leaves known-subcommand invocations to Typer (no interception)."""
+    import sys
+
+    import pytest
+
+    import deconflict.cli as cli_mod
+
+    monkeypatch.setattr(
+        sys, "argv", ["deconflict", "resolve", str(sample_dir), "--auto", "newest", "--dry-run"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "dry-run" in out
+
+
+def test_main_bare_config_flag(sample_dir, tmp_path, monkeypatch):
+    """`deconflict --config <f> <dir>` via main() honours the config + dir."""
+    import sys
+
+    import deconflict.cli as cli_mod
+
+    cfgfile = tmp_path / "alt.toml"
+    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n')
+    calls: list[tuple] = []
+    monkeypatch.setattr(sys, "argv", ["deconflict", "--config", str(cfgfile)])
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
+    monkeypatch.setattr(
+        cli_mod, "_launch_tui", lambda engine, groups: calls.append((engine, groups))
+    )
+    cli_mod.main()
+    assert len(calls) == 1
+    engine, groups = calls[0]
+    assert len(groups) == 6
+
+
 def test_init_config_writes(tmp_path):
     target = tmp_path / "cfg" / "config.toml"
     result = runner.invoke(app, ["init-config", "--path", str(target)])
