@@ -367,13 +367,16 @@ def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch, force_cli):
 
 
 def test_interactive_table_has_flags(sample_dir, tmp_path, monkeypatch, force_cli):
-    """The group table shows #-role, size(+delta), mtime, and metadata (no suggest)."""
+    """The primary per-group view shows the metadata-diff table + full paths
+    (no overview/#-role/suggest columns)."""
     import deconflict.config as config_mod
 
     monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
     result = runner.invoke(app, [], input="q\n")
-    assert "mtime" in result.stdout
-    assert "metadata" in result.stdout
+    # metadata-diff table is the primary view, not the old #/size/mtime/metadata overview
+    assert "metadata diff" in result.stdout
+    assert "full paths" in result.stdout
+    assert "#0" in result.stdout
     assert "suggest" not in result.stdout
     assert "vs base" not in result.stdout
 
@@ -390,13 +393,15 @@ def test_bare_no_dirs_explains(tmp_path, monkeypatch):
 
 
 def test_interactive_metadata_menu_option(sample_dir, tmp_path, monkeypatch, force_cli):
-    """First group is the mp3 (metadata differs) so (m)etadata shows a base/copy table."""
+    """First group is the mp3 (metadata differs); the metadata-diff table is SHOWN
+    automatically as the primary view (the old (m)etadata action was removed)."""
     import deconflict.config as config_mod
 
     monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
-    result = runner.invoke(app, [], input="m\n" + "s\n" * 10)
+    result = runner.invoke(app, [], input="s\n" * 10)
     assert result.exit_code == 0
-    assert "(m)etadata" in result.stdout
+    # (m)etadata action no longer offered — table is now auto-shown
+    assert "(m)etadata" not in result.stdout
     # item: attrs + content are ONE combined table titled "metadata diff"
     assert "metadata diff" in result.stdout
     # common + diff fields both appear as table rows
@@ -421,14 +426,15 @@ def test_truncate_meta():
 
 
 def test_interactive_office_metadata_cell_truncated(sample_dir, tmp_path, monkeypatch, force_cli):
-    """An office copy's metadata cell shows truncated content, not raw XML."""
+    """An office copy's metadata table shows truncated field values, not raw XML/reports."""
     import deconflict.config as config_mod
 
     monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
-    # reach the xlsx group (group 3): skip 2, then 'm' metadata? no — check overview cell:
+    # reach the xlsx group (group 3): skip 2, then skip the rest, quit
     result = runner.invoke(app, [], input="s\ns\ns\ns\ns\ns\nq\n")
     assert result.exit_code == 0
-    assert "content:" in result.stdout
+    assert "metadata diff" in result.stdout
+    # long office field values are truncated with the …(+N more) marker
     assert "+" in result.stdout and "more" in result.stdout
 
 
@@ -573,3 +579,83 @@ def test_scan_progress_flag_forced(sample_dir):
     result = runner.invoke(app, ["scan", str(sample_dir), "--progress"])
     assert result.exit_code == 0
     assert "conflict group(s)" in result.stdout
+
+
+def _rec_group(tmp_path: str, base_text: str, copy_text: str, *, copy_newer: bool = True):
+    """Build a scan dir with one text group; return (engine, GroupAnalysis)
+    with deterministic mtimes."""
+    import os
+
+    from deconflict.engine import Engine, EngineConfig
+
+    d = Path(tmp_path) / "scan"
+    d.mkdir()
+    base = d / "doc.txt"
+    copy = d / "doc (conflicted copy 2020-01-01 000000).txt"
+    base.write_text(base_text)
+    copy.write_text(copy_text)
+    os.utime(base, (1_000_000, 1_000_000))
+    if copy_newer:
+        os.utime(copy, (2_000_000, 2_000_000))
+    engine = Engine(
+        EngineConfig(
+            dirs=[d], backup_dir=Path(tmp_path) / "backup", cache_dir=Path(tmp_path) / "cache"
+        )
+    )
+    analyzed = engine.analyze(engine.scan())
+    ga = next(ga for g, ga in analyzed if g.base is not None)
+    return engine, ga
+
+
+def test_recommend_all_identical_keeps_base(tmp_path):
+    """G3: when all files are identical in content, recommend keep base."""
+    from deconflict.cli import _recommend
+
+    _engine, ga = _rec_group(tmp_path, "same", "same")
+    rec = _recommend(ga)
+    assert rec is not None
+    label, action = rec
+    assert action.kind.value == "base"
+    assert "identical" in label
+
+
+def test_recommend_strictly_newer_copy(tmp_path):
+    """G3: when the copy is strictly newer AND text-superset, recommend keep that copy."""
+    from deconflict.cli import _recommend
+
+    _engine, ga = _rec_group(tmp_path, "line1\nline2", "line1\nline2\nline3\n")
+    rec = _recommend(ga)
+    assert rec is not None
+    label, action = rec
+    assert action.kind.value == "copy"
+    assert "copy" in label
+
+
+def test_recommend_no_clear_winner(tmp_path):
+    """G3: no recommendation when the copy is strictly-newer but REMOVES content."""
+    from deconflict.cli import _recommend
+
+    # newest copy drops a line (not a superset) => no clear winner
+    _engine, ga = _rec_group(tmp_path, "line1\nline2", "line2")
+    assert _recommend(ga) is None
+
+
+def test_recommend_enter_picks_default(tmp_path):
+    """G3: the menu surfaces the recommendation as an Enter default, and empty input picks it."""
+    from unittest.mock import patch
+
+    import deconflict.cli as cli
+
+    engine, ga = _rec_group(tmp_path, "same", "same")
+    rec = cli._recommend(ga)
+    assert rec is not None
+
+    # menu text advertises the Enter default
+    menu = cli._menu_text(engine, ga, rec)
+    assert "(Enter) keep" in menu
+
+    # a bare Enter in the prompt returns the recommended action (empty branch
+    # returns `rec[1]` before the (unused here) group is touched)
+    with patch("builtins.input", return_value=""):
+        out = cli._prompt(engine, None, ga, rec)
+    assert out is rec[1]

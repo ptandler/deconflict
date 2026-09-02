@@ -21,9 +21,6 @@ from .launchers import ToolType
 from .media import KINDS
 from .patterns import build_patterns
 from .render import (
-    fmt_mtime as _fmt_mtime,
-)
-from .render import (
     human as _human,
 )
 from .render import (
@@ -120,22 +117,6 @@ def _invalidate_cache(engine: Engine) -> None:
     """After a real resolve, drop the now-stale scan cache for the next run."""
     if not engine.cfg.dry_run and engine.cache is not None:
         engine.cache.clear()
-
-
-def _size_cell(ga: GroupAnalysis, a, idx) -> str:
-    """Size, with the copy's delta vs base shown in parentheses (base has none)."""
-    size = f"{_human(a.info.size)}"
-    if idx is None:
-        return size
-    delta = a.info.size - ga.base.info.size if ga.base else 0
-    if ga.base and a.info.sha == ga.base.info.sha:
-        return f"{size} [dim](=)[/dim]"
-    if ga.base is None:
-        arrow = "↑" if delta > 0 else "↓" if delta < 0 else "="
-        return f"{size} [dim]({arrow})[/dim]"
-    arrow = "↑" if delta > 0 else "↓" if delta < 0 else "≠"
-    bit = f" {_human(abs(delta))}" if delta else ""
-    return f"{size} [yellow]({arrow}{bit})[/yellow]"
 
 
 _ATTR_FIELDS = render._ATTR_FIELDS  # fs-attribute field names (shown, not "diff" markers)
@@ -437,8 +418,8 @@ def _run_interactive(engine: Engine, groups) -> None:
     skipped = 0
     for i, (group, ga) in enumerate(groups, 1):
         while True:
-            _show_group(engine, group, ga, i, total)
-            action = _prompt(engine, group, ga)
+            rec = _show_group(engine, group, ga, i, total)
+            action = _prompt(engine, group, ga, rec)
             if action is None:  # (q)uit
                 console.print(f"\n[done]aborted after {i - 1} of {total} group(s)")
                 return
@@ -483,67 +464,83 @@ def _apply(engine: Engine, group: ConflictGroup, action: Action) -> None:
         console.print(f"  {label}{dst}{detail}")
 
 
+def _recommend(ga: GroupAnalysis) -> tuple[str, Action] | None:
+    """A clear winner (label, keep-Action) or None.
+
+    - All files identical in content -> keep base.
+    - One file is strictly-newest AND, for text, its content is a superset of the
+      base's (added lines, none removed) -> keep that file.
+    """
+    if ga.base is None:
+        return None
+    if ga.all_equal:
+        return ("base (all files identical)", Action.keep_base())
+    items = [ga.base, *ga.copies]
+    newest = max(items, key=lambda a: a.info.mtime)
+    non_newest = [a for a in items if a is not newest]
+    if all(n.info.mtime < newest.info.mtime for n in non_newest):
+        if ga.kind == "text" and not _text_superset(ga.base.path, newest.path):
+            return None
+        if ga.base and newest is ga.base:
+            return (f"base '{ga.base.path.name}' (newest)", Action.keep_base())
+        return (f"copy '{newest.path.name}' (newest)", Action.keep_copy(newest.path))
+    return None
+
+
+def _text_superset(base: Path, newest: Path) -> bool:
+    """True when `newest`'s text contains all of `base`'s lines (plus something)."""
+    try:
+        a = set(base.read_text(encoding="utf-8", errors="replace").splitlines())
+        b = set(newest.read_text(encoding="utf-8", errors="replace").splitlines())
+    except OSError:
+        return False
+    return a <= b and a != b
+
+
 def _show_group(
     engine: Engine, group: ConflictGroup, ga: GroupAnalysis, i: int, total: int
-) -> None:
+) -> tuple[str, Action] | None:
+    """Primary per-group view: full paths + metadata-diff table(s) + recommendation.
+
+    Returns the recommended `(label, Action)` when a clear winner exists (used as
+    the Enter default in `_prompt`), else None.
+    """
     console.print()
     title = group.base.name if group.base else group.key
-    table = Table(title=f"[bold]Group {i}/{total}[/bold] — {title}")
-    table.add_column("#")
-    table.add_column("file", style="cyan")
-    table.add_column("size")
-    table.add_column("mtime")
-    table.add_column("metadata")
-    rows: list[tuple] = ([(ga.base, None)] if ga.base else []) + [
-        (c, i) for i, c in enumerate(ga.copies)
-    ]
-    for a, idx in rows:
-        if a is None:
-            continue
-        if idx is None:  # base row
-            num = "[bold]#0[/bold]"
-            meta = "[dim]—[/dim]"
-        else:
-            num = f"[bold]#{idx + 1}[/bold]"
-            md = ga.meta[idx] if idx < len(ga.meta) else None
-            if md is None:
-                meta = "[dim]—[/dim]"
-            elif md is True:
-                meta = "[green]same[/green]"
-            else:
-                differ = _differing_fields(ga, idx)
-                meta = "[yellow]diff[/yellow]"
-                if differ:
-                    meta += "\n" + "\n".join(f"[dim]{d}[/dim]" for d in differ)
-        table.add_row(
-            num,
-            _path_cell(engine, a.path),
-            _size_cell(ga, a, idx),
-            _fmt_mtime(a.info.mtime),
-            meta,
-        )
-    console.print(table)
+    console.print(f"[bold]Group {i}/{total}[/bold] — {title}")
     if ga.all_equal:
-        console.print("[dim]copies identical in content[/dim]")
+        console.print("[dim]all files identical in content[/dim]")
     else:
-        console.print("[yellow]copies differ in content[/yellow]")
-        for idx, c in enumerate(ga.copies):
-            if idx >= len(ga.meta) or ga.meta[idx] is None:
-                continue
-            if ga.meta[idx] is True:
-                console.print(f"[dim]  {c.path.name}: content differs, metadata same[/dim]")
-            else:
-                detail = ga.meta_diff[idx] or "metadata differs"
-                console.print(f"[yellow]  {c.path.name}: {detail}[/yellow]")
+        console.print("[yellow]files differ in content[/yellow]")
+    console.print("[dim]full paths:[/dim]")
+    for a in ([ga.base] if ga.base else []) + ga.copies:
+        console.print(f"  {_path_cell(engine, a.path)}")
+    if ga.base is not None:
+        for idx, _c in enumerate(ga.copies):
+            tb = metadata_diff_table(ga, idx)
+            if tb is not None:
+                console.print(tb)
+    rec = _recommend(ga)
+    if rec is not None:
+        label, _action = rec
+        console.print(f"[bold cyan]recommend: keep {escape(label)}[/bold cyan]")
+    return rec
 
 
-def _prompt(engine: Engine, group: ConflictGroup, ga: GroupAnalysis) -> Action | None:
+def _prompt(
+    engine: Engine, group: ConflictGroup, ga: GroupAnalysis, rec: tuple[str, Action] | None
+) -> Action | None:
     target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
     bykey: dict[str, tuple[str, ToolType | str]] = {
         key: (label, tool) for key, label, tool in actions_for(engine, ga)
     }
     while True:
-        ans = input(_menu_text(engine, ga)).strip().lower()
+        ans = input(_menu_text(engine, ga, rec)).strip().lower()
+        if ans == "":
+            if rec is not None:
+                return rec[1]
+            print("invalid choice")
+            continue
         if ans.isdigit():
             action = _keep_by_number(ga, int(ans))
             if action is not None:
@@ -559,9 +556,6 @@ def _prompt(engine: Engine, group: ConflictGroup, ga: GroupAnalysis) -> Action |
                 continue
             if tool == "office_diff":
                 _print_office_diff(group, target)
-                continue
-            if tool == "meta_view":
-                _print_metadata_diff(ga, 0)
                 continue
         if ans in ("h", "keep-both"):
             return Action.keep_both()
@@ -584,8 +578,11 @@ def _keep_by_number(ga: GroupAnalysis, idx: int) -> Action | None:
     return None
 
 
-def _menu_text(engine: Engine, ga: GroupAnalysis) -> str:
-    parts = ["(0) keep base"] if ga.base else []
+def _menu_text(engine: Engine, ga: GroupAnalysis, rec: tuple[str, Action] | None = None) -> str:
+    parts: list[str] = []
+    if rec is not None:
+        parts.append(f"[bold cyan](Enter) keep {escape(rec[0])}[/bold cyan]")
+    parts.append("(0) keep base") if ga.base else None
     for n, _c in enumerate(ga.copies, 1):
         parts.append(f"({n}) keep copy #{n}")
     parts += [f"({key}){label}" for key, label, _tool in actions_for(engine, ga)]
@@ -643,16 +640,6 @@ def _diff_fields(ga: GroupAnalysis, idx: int) -> FieldDicts:
     return render._diff_fields(ga, idx)
 
 
-def _differing_fields(ga: GroupAnalysis, idx: int) -> list[str]:
-    """Short `field: value` lines for the copy's CONTENT fields that differ from base."""
-    bf, cf = _diff_fields(ga, idx)
-    return [
-        f"{k}: {_truncate_meta(cf.get(k, '∅'))}"
-        for k in dict.fromkeys([*bf, *cf])
-        if bf.get(k) != cf.get(k) and k not in _ATTR_FIELDS
-    ]
-
-
 _META_HEADER_TAIL = render._META_HEADER_TAIL  # trailer chars kept on header truncation
 
 
@@ -708,7 +695,9 @@ def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
     _print_tools_footer(cfg_path)
 
 
-_TOP_LEVEL_COMMANDS = frozenset({"patterns", "init-config", "config", "scan", "cache", "resolve", "version"})
+_TOP_LEVEL_COMMANDS = frozenset(
+    {"patterns", "init-config", "config", "scan", "cache", "resolve", "version"}
+)
 
 
 def main() -> None:

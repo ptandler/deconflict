@@ -66,6 +66,4 @@ def actions_for(engine: Engine, ga: GroupAnalysis) -> list[tuple[str, str, ToolT
         a.append(("d", "diff", "office_diff"))
     elif k == "kdbx":
         a.append(("v", "merge", ToolType.VIEW))
-    # (m)etadata is always available (generic file attrs at minimum).
-    a.append(("m", "etadata", "meta_view"))
     return a

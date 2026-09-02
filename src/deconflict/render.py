@@ -111,6 +111,35 @@ def _row_cells(bf, cf, keys: list[str]) -> list[tuple[str, str, str]]:
     return out
 
 
+def _content_cell(ga: GroupAnalysis, copy) -> tuple[str, str]:
+    """(base-cell, copy-cell) for the content row: identical or a brief diff.
+
+    Uses the stored hash from analysis; for text/office kinds a short snippet of
+    the differences is shown. Cells are escaped markup strings.
+    """
+    if ga.base is None or ga.base.info.sha == copy.info.sha:
+        return ("[green]identical[/green]", "=")
+    if ga.kind in ("text", "office"):
+        return ("", _brief_text_diff(ga.base.path, copy.path))
+    return ("[yellow]differs[/yellow]", "≠")
+
+
+def _brief_text_diff(base: Path, copy: Path) -> str:
+    """A one-line snippet of the first differing region for the content row."""
+    from difflib import unified_diff
+
+    def read(p):
+        try:
+            return p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
+
+    for line in unified_diff(read(base), read(copy), lineterm=""):
+        if line.startswith("+") and not line.startswith("+++"):
+            return escape(truncate_meta(line[1:], 60))
+    return "[yellow]≠[/yellow]"
+
+
 def metadata_diff_table(ga: GroupAnalysis, idx: int) -> Table | None:
     """ONE combined metadata-diff table with base and copy as columns.
 
@@ -135,6 +164,10 @@ def metadata_diff_table(ga: GroupAnalysis, idx: int) -> Table | None:
     table.add_column(base_label, overflow="ellipsis")
     table.add_column(copy_label, overflow="ellipsis")
     copy = ga.copies[idx]
+    content_cell = _content_cell(ga, copy)
+    table.add_row("content", *content_cell)
+    if content_cell[0] or content_cell[1]:
+        table.add_section()
     sizes_equal = ga.base.info.size == copy.info.size
     bigger = (
         "base"

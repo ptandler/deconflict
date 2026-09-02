@@ -223,13 +223,15 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 - [x] `--progress` option for scan; enabled by default when interactive (TTY), off when piped/scripted — `--progress/--no-progress` on `scan`+`resolve`+bare; default `None` → `sys.stdout.isatty()`; wraps `engine.scan(on_file=...)` in a Rich Progress bar (indeterminate, `total=None`)
 - Result: 4 new CLI tests; `mise run check` green (100 passed); committed on `feature/todo-batch`
 
-### G2 — table rendering polish (contained, render-side)
+### G2 — table rendering polish (contained, render-side) ✅ done
 - [x] `_meta_diff_columns` truncation keeps `start…tail` so the conflict-pattern suffix stays visible — already implemented on main (`_truncate_name` + `_META_HEADER_TAIL`); plan checkbox was stale
-- [~] metadata compare table: newer dates highlighted, larger sizes highlighted/bold — implemented in `_print_metadata_diff` via new `_hl()` helper (larger size cell → **bold**, newer modified date cell → bold cyan, dim-when-equal kept); G2 test `test_metadata_diff_highlights_newer_and_larger` added (deterministic `os.utime`); **NOT yet verified/committed** — user stopped for today before final `mise run check`; uncommitted in working tree
+- [x] metadata compare table: newer dates highlighted, larger sizes highlighted/bold — implemented in `_print_metadata_diff` via new `_hl()` helper (larger size cell → **bold**, newer modified date cell → bold cyan, dim-when-equal kept); G2 test `test_metadata_diff_highlights_newer_and_larger` added (deterministic `os.utime`); **verified + committed** with G4/G5/G6... actually G2 alone — committed.
 
-### G3 — interactive flow revamp (primary UX)
-- [ ] drop the initial overview table; show the metadata compare table as the primary per-group view; remove the separate `(m)etadata` action; long filenames wrap; add a row for identical/changed content (brief diff)
-- [ ] recommendation: when clear winner exists (all identical → base; one strictly-newer → that one), print a "recommend keep X" line + offer it as a default action
+### G3 — interactive flow revamp (primary UX) ✅ done
+- [x] drop the initial overview table; show the metadata compare table as the primary per-group view; remove the separate `(m)etadata` action; long filenames wrap; add a row for identical/changed content (brief diff)
+  - `_show_group` now prints full paths + one `metadata_diff_table` per copy (primary view) + a content-identical/changed header line. The `(m)etadata` action removed from `actions.py` (was `meta_view`); TUI's metadata table is already the default diff view. Added a `content` row to `render.metadata_diff_table` showing `identical` / a brief first-diff-line snippet (text/office) / `differs`.
+- [x] recommendation: when clear winner exists (all identical → base; one strictly-newer → that one), print a "recommend keep X" line + offer it as a default action
+  - `_recommend(ga)` in cli.py: all-identical → keep base; one strictly-newest AND (for text) its content is a superset of base's → keep that file. Menu shows `(Enter) keep <X>`; bare Enter applies the recommended action. Labels escaped (MarkupError safety). Tests: `test_recommend_*` (4).
 
 ### G4 — launcher & menu fixes
 - [ ] non-blocking external launches (open/edit/diff must not freeze the menu; user goes straight back to actions)
