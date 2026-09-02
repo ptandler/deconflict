@@ -156,6 +156,37 @@ def test_metadata_fields_include_generic_attrs(sample_dir):
     assert any(k not in media.META_ATTR_FIELDS for k in fields)
 
 
+def test_office_text_falls_back_to_zip_without_converter(sample_dir):
+    """item: office_text uses our zip walk when no external converter is configured."""
+    base, _copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    text = media.office_text(base, {})
+    assert text.strip()
+    # content is a readable cell dump, not raw XML markup
+    assert "Summe" in text
+
+
+def test_office_text_uses_converter_when_available(sample_dir, monkeypatch, tmp_path):
+    """item: when [tools].office_text is set, its output wins over the zip walk."""
+    base, _copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    sentinel = "FAKE CONVERTER OUTPUT"
+    script = tmp_path / "fake_conv"
+    script.write_text(f"#!/bin/sh\nprintf '%s\\n' '{sentinel}'\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(media, "_OFFICE_TEXT_CACHE", {})
+    assert media.office_text(base, {"office_text": str(script)}) == sentinel
+    monkeypatch.setattr(media, "_OFFICE_TEXT_CACHE", {})
+
+
+def test_office_text_converter_fallback_on_error(sample_dir, tmp_path, monkeypatch):
+    """item: a failing converter returns to the zip-based extraction."""
+    base, _copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    bad = tmp_path / "bad_conv"
+    bad.write_text("#!/bin/sh\nexit 1\n")
+    bad.chmod(0o755)
+    monkeypatch.setattr(media, "_OFFICE_TEXT_CACHE", {})
+    assert media.office_text(base, {"office_text": str(bad)})
+
+
 class _FakeProc:
     def __init__(self, returncode: int, stdout: str):
         self.returncode = returncode

@@ -360,11 +360,47 @@ def _is_od_text_p(el) -> bool:
     return el.tag == f"{{{_OD_NS}}}p" or el.tag.endswith("}p")
 
 
-def _office_fields(path: Path) -> dict[str, str]:
+def _office_fields(path: Path, tools: dict[str, str] | None = None) -> dict[str, str]:
     """Office metadata: core props first, then the cleaned document text as `content`."""
     fields = dict(_office_core_props(path))
-    fields["content"] = _extract_office_text(path)
+    fields["content"] = office_text(path, tools or {})
     return fields
+
+
+def office_text(path: Path, tools: dict[str, str] | None = None) -> str:
+    """Extract faithful plain text from an office doc.
+
+    Prefer an external converter when available (`[tools].office_text`, e.g.
+    `odt2txt`/`pandoc` read the file directly and give fuller output than our
+    zip walk), falling back to the dependency-free `_extract_office_text` so the
+    feature never hard-requires a tool. `soffice` is not used here because it
+    needs `--headless --convert-to txt` (slow, writes temp files).
+    """
+    conv = (tools or {}).get("office_text")
+    if conv:
+        _OFFICE_TEXT_CACHE.setdefault(path, {})
+        cache = _OFFICE_TEXT_CACHE[path]
+        if "value" not in cache:
+            cache["value"] = _convert_via(conv, path) or _extract_office_text(path)
+        return cache["value"]
+    return _extract_office_text(path)
+
+
+_OFFICE_TEXT_CACHE: dict[Path, dict] = {}
+
+
+def _convert_via(conv: str, path: Path) -> str | None:
+    """Run a CLI text extractor that reads the file directly; None on any error."""
+    base = Path(conv).name
+    try:
+        # pandoc reads plain text to stdout; odt2txt and friends take the file.
+        args = [conv, "-t", "plain", str(path)] if base.startswith("pandoc") else [conv, str(path)]
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        return proc.stdout[:4000].strip()
+    except Exception:
+        return None
 
 
 def _content_fields(path: Path, kind: str, tools: dict[str, str]) -> dict[str, str]:
@@ -384,7 +420,7 @@ def _content_fields(path: Path, kind: str, tools: dict[str, str]) -> dict[str, s
     if kind == "video":
         return {"streams": video_summary(path, tools.get("video_probe"))}
     if kind == "office":
-        return _office_fields(path)
+        return _office_fields(path, tools)
     # text / other / kdbx: no content metadata (still get generic file attrs)
     return {}
 

@@ -290,8 +290,12 @@ class Pipeline:
 3. Optional `fd` backend for S1.
 4. True streaming generator pipeline (S1→S2→S3) for as-soon-as-ready resolve.
 
-### G8 — office diff research
-- [ ] research office-format diff tools (text-conversion + GUI diff) and implement the feasible part
+### G8 — office diff research ✅ done
+- Implemented an optional external office text-conversion backend: `office_text(path, tools)` in `media.py` prefers a configured `[tools].office_text` converter (`odt2txt`/`pandoc` read the file directly; both named in `tools.DEFAULTS`), falling back to our dependency-free zip walk (`_extract_office_text`) so the feature never hard-requires a tool. Added `_OFFICE_TEXT_CACHE` so repeated reads (scan + resolve) are computed once. Route through `_content_fields` so overview same/diff and the metadata table stay consistent on the same backend. Tests: `test_office_text_falls_back_to_zip_without_converter`, `test_office_text_uses_converter_when_available`, `test_office_text_converter_fallback_on_error`. `soffice` is deliberately NOT wired in here (needs slow `--headless --convert-to txt` + temp files) — only direct-read converters.
+- Research findings (recorded for future work):
+  - **Text conversion/diff (headless):** `odt2txt` / `pandoc` read docs to plain text (feasible now, done above); `sfk oload` reads docx/xlsx/odt/ods to text (`-raw`, `-subnames`, `-utfout`) → pipe to diff; `odfit` pretty-prints odf archive members for git textconv; ExifTool `-diff` already handled separately.
+  - **GUI diff:** LibreOffice built-in `File → Compare Document` (redlining; open newer, compare to older — this build rejects the `soffice --compare` CLI flag); `DOCX-DIFF` (python, word-level, terminal side-by-side); Windows-only Word/Spreadsheet Compare.
+  - New `office_compare` tool name added to `tools.py` (soffice/libreoffice) + install hint for a future redline-diff launch; not yet wired to a menu action.
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
 - Future: Textual TUI, PySide GUI.
 - Office metadata: parse docx/xlsx/ods XML (document.xml/sharedStrings/content.xml) into real per-field metadata (text runs, cell values) instead of raw truncated XML — see metadata fields item above; also lets the `(m)etadata` table show meaningful common/diff rows for office.

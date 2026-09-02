@@ -13,6 +13,10 @@ DEFAULTS: dict[str, list[str]] = {
     "image_viewer": (["eog", "xdg-open"] if os.name != "nt" else ["mspaint", "start"]),
     "image_editor": ["gimp", "pinta", "kolourpaint"],
     "office": ["soffice", "libreoffice"],
+    # Optional text conversion for office diffing (odt2txt/pandoc read the file
+    # directly; soffice needs --headless --convert-to txt, see media.office_text).
+    "office_text": ["odt2txt", "pandoc"],
+    "office_compare": ["soffice", "libreoffice"],  # GUI File > Compare Document
     "keepass": ["keepassxc-cli"],
     # Prefer GUI tag editors over the CLI; kid3-cli stays a last-resort fallback.
     "mp3_editor": ["kid3", "easytag", "picard", "kid3-cli"],
@@ -28,6 +32,8 @@ INSTALL_HINTS: dict[str, str] = {
     "image_viewer": "eog: apt install eog  ·  brew install eog",
     "image_editor": "gimp: apt install gimp  ·  brew install --cask gimp",
     "office": "soffice: apt install libreoffice  ·  brew install --cask libreoffice",
+    "office_text": "odt2txt: apt install odt2txt  ·  brew install odt2txt  ·  cand: pandoc",
+    "office_compare": "soffice File>Compare: libreoffice (use for a redline GUI diff)",
     "keepass": "keepassxc-cli: apt install keepassxc  ·  brew install keepassxc",
     "mp3_editor": "kid3/easytag: apt install kid3 easytag  ·  brew install --cask kid3 easytag",
     "audio_player": "mpv/vlc: apt install mpv vlc  ·  brew install --cask vlc",
