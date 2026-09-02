@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..actions import actions_for
+from ..analyze import recommend
 from ..launchers import ToolType
 
 if TYPE_CHECKING:
@@ -25,6 +26,7 @@ KEEP_COPY = "keep_copy"
 KEEP_BOTH = "keep_both"
 SKIP = "skip"
 QUIT = "quit"
+RECOMMENDED = "recommended"
 # Inline (handled by the frontend using shared render) kinds.
 _DIFF = "term_diff"
 _OFFICE_DIFF = "office_diff"
@@ -44,6 +46,11 @@ class ActionEntry:
 def build_actions(engine: Engine, ga: GroupAnalysis) -> list[ActionEntry]:
     """Ordered action entries for the current group's kind + resolution choices."""
     entries: list[ActionEntry] = []
+    rec = recommend(ga)
+    if rec is not None:
+        entries.append(
+            ActionEntry("r", f"keep recommended ({rec.label})", RECOMMENDED, extra=rec.is_base)
+        )
     if ga.base is not None:
         entries.append(ActionEntry("0", "keep base", KEEP_BASE))
     for i, _c in enumerate(ga.copies):

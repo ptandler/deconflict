@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING
 
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, HorizontalScroll, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, TabbedContent, TabPane
 
+from ..analyze import recommend
 from ..engine import Action
 from ..launchers import ToolType
 from ..render import metadata_diff_table, office_diff_lines, text_diff_lines
@@ -24,6 +25,7 @@ from .actions import (
     KEEP_BOTH,
     KEEP_COPY,
     QUIT,
+    RECOMMENDED,
     SKIP,
     ActionEntry,
     build_actions,
@@ -53,13 +55,19 @@ class DeconflictApp(App):
         height: 1fr;
     }
     #actions {
-        height: 3;
         dock: bottom;
         background: $surface;
         padding: 0 1;
+        height: auto;
+        layout: vertical;
+    }
+    #actions > .action-row {
+        width: 1fr;
+        layout: horizontal;
     }
     Button {
         margin: 0 1;
+        width: auto;
     }
     #files, #groups {
         height: 1fr;
@@ -103,13 +111,13 @@ class DeconflictApp(App):
                 yield GroupTable(id="groups")
             with Vertical(id="right"):
                 with TabbedContent(id="tabs"):
-                    with TabPane("Files", id="tab-files"):
-                        yield FilesTable(id="files")
                     with TabPane("Diff", id="tab-diff"):
                         yield DiffView(id="diff")
+                    with TabPane("Files", id="tab-files"):
+                        yield FilesTable(id="files")
                     with TabPane("Log", id="tab-log"):
                         yield LogView(id="log")
-                yield HorizontalScroll(id="actions")
+                yield Vertical(id="actions")
         yield Footer()
 
     # -- selection ----------------------------------------------------------
@@ -132,13 +140,25 @@ class DeconflictApp(App):
     def _show_default_diff(self, group: ConflictGroup, ga: GroupAnalysis) -> None:
         """Prime the Diff tab with the metadata table for the selected group."""
         diff = self.query_one("#diff", DiffView)
+        rec = recommend(ga)
+        banner = ""
+        if rec is not None:
+            banner = f"[bold cyan]recommend: keep {rec.label}[/bold cyan]\n"
         if ga.base is not None and ga.copies:
             table = metadata_diff_table(ga, 0)
-            diff.show_renderable(
-                f"metadata diff — {group.base.name}", table or "[dim]no metadata[/dim]"
-            )
+            title = f"{banner}metadata diff — {group.base.name}"
+            diff.show_renderable(title, table or "[dim]no metadata[/dim]")
         else:
-            diff.show_renderable("metadata diff", "[dim]no base/copy to compare[/dim]")
+            diff.show_renderable(f"{banner}metadata diff", "[dim]no base/copy to compare[/dim]")
+
+    def on_data_table_row_highlighted(self, event) -> None:
+        """Arrow-key navigation: sync the right pane immediately (no Enter needed)."""
+        if event.data_table.id == "groups":
+            key = event.row_key.value
+            for i, (group, _ga) in enumerate(self.groups):
+                if group.key == key:
+                    self._select_index(i)
+                    break
 
     def on_data_table_row_selected(self, event) -> None:
         if event.data_table.id == "groups":
@@ -150,20 +170,39 @@ class DeconflictApp(App):
 
     # -- action bar ---------------------------------------------------------
     def _render_actions(self, group: ConflictGroup, ga: GroupAnalysis) -> None:
-        box = self.query_one("#actions", HorizontalScroll)
+        box = self.query_one("#actions", Vertical)
         box.remove_children()
         self.action_map = {}
         entries = build_actions(self.engine, ga)
-        for i, entry in enumerate(entries):
-            self._action_seq += 1
-            btn_id = f"act-{self._action_seq}-{i}"
-            btn = Button(f"({entry.hotkey}) {entry.label}", id=btn_id)
-            btn.variant = self._button_variant(entry.kind)
-            self.action_map[btn_id] = entry
-            box.mount(btn)
+        # Estimate each button's display width: label chars + braces + padding.
+        widths = [len(f"({e.hotkey}) {e.label}") + 4 for e in entries]
+        # Chunk into rows that fit the pane width (fallback: all on one row).
+        avail = max(self.size.width // 2 - 4, 12)
+        rows: list[list[ActionEntry]] = [[]]
+        row_w = 0
+        for w, entry in zip(widths, entries, strict=False):
+            if rows[-1] and row_w + w > avail:
+                rows.append([])
+                row_w = 0
+            rows[-1].append(entry)
+            row_w += w
+        for row in rows:
+            hrow = Horizontal(classes="action-row")
+            box.mount(hrow)  # mount first so we can add buttons into it
+            for entry in row:
+                self._action_seq += 1
+                btn_id = f"act-{self._action_seq}-{entry.hotkey}"
+                btn = Button(f"({entry.hotkey}) {entry.label}", id=btn_id)
+                btn.variant = self._button_variant(entry.kind)
+                self.action_map[btn_id] = entry
+                hrow.mount(btn)
+        # Buttons render 3 lines each; keep the docked bar just tall enough.
+        box.styles.height = len(rows) * 3 + 2
 
     @staticmethod
     def _button_variant(kind: str) -> str:
+        if kind == RECOMMENDED:
+            return "success"
         if kind in (KEEP_BASE, KEEP_COPY):
             return "success"
         if kind == KEEP_BOTH:
@@ -203,15 +242,22 @@ class DeconflictApp(App):
 
     def action_cycle_tab(self) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
-        order = ["tab-files", "tab-diff", "tab-log"]
+        order = ["tab-diff", "tab-files", "tab-log"]
         cur = tabs.active
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "tab-files"
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "tab-diff"
         tabs.active = nxt
 
     # -- dispatch -----------------------------------------------------------
     def dispatch(self, entry: ActionEntry) -> None:
         group, ga = self.groups[self.current_index]
-        if entry.kind == KEEP_BASE:
+        if entry.kind == RECOMMENDED:
+            rec = recommend(ga)
+            if rec is not None:
+                if rec.is_base:
+                    self.apply_resolve(Action.keep_base(), group, ga)
+                else:
+                    self.apply_resolve(Action.keep_copy(rec.winner.path), group, ga)
+        elif entry.kind == KEEP_BASE:
             self.apply_resolve(Action.keep_base(), group, ga)
         elif entry.kind == KEEP_COPY:
             idx = entry.target_index if entry.target_index is not None else 0

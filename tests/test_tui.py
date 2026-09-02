@@ -106,16 +106,16 @@ def test_tab_cycle(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             tabs = app.query_one("#tabs")
-            assert tabs.active == "tab-files"
+            assert tabs.active == "tab-diff"
             await pilot.press("ctrl+t")
             await pilot.pause()
-            assert tabs.active == "tab-diff"
+            assert tabs.active == "tab-files"
             await pilot.press("ctrl+t")
             await pilot.pause()
             assert tabs.active == "tab-log"
             await pilot.press("ctrl+t")
             await pilot.pause()
-            assert tabs.active == "tab-files"
+            assert tabs.active == "tab-diff"
 
     asyncio.run(_run())
 
@@ -154,5 +154,32 @@ def test_keep_copy_advances(tmp_path):
             await pilot.pause()
             assert app.resolved == 1
             assert app.current_index == 1
+
+    asyncio.run(_run())
+
+
+def test_arrow_keys_sync_selection_and_diff(tmp_path):
+    """Up/down arrow navigation updates the current group + right pane immediately."""
+    engine, groups = _make_groups(tmp_path)
+    from deconflict.tui.app import DeconflictApp
+
+    async def _run():
+        app = DeconflictApp(engine, groups)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.current_index == 0
+            # Press down arrow -> moves to group 1 without pressing Enter
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.current_index == 1, f"expected index 1, got {app.current_index}"
+            # Right pane diff view should have been re-primed for the new group
+            diff = app.query_one("#diff")
+            static = diff.query_one("#diff-title")
+            text = str(static.render())
+            assert text.strip(), "diff title should be populated after arrow navigation"
+            # Press up arrow -> back to group 0
+            await pilot.press("up")
+            await pilot.pause()
+            assert app.current_index == 0, f"expected index 0, got {app.current_index}"
 
     asyncio.run(_run())

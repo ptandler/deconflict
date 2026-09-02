@@ -674,6 +674,99 @@ def test_recommend_no_clear_winner(tmp_path):
     assert _recommend(ga) is None
 
 
+def test_recommend_whitespace_only_base_is_superseded(tmp_path):
+    """Recommend the copy when the base is effectively empty (blank/whitespace only)."""
+    from deconflict.analyze import recommend
+
+    _engine, ga = _rec_group(tmp_path, "   \n", "line1 adds real content\n")
+    rec = recommend(ga)
+    assert rec is not None
+    assert rec.is_base is False
+
+
+def test_recommend_newer_but_smaller_audio_is_rejected(tmp_path):
+    """G2 (09-02): a newer binary/media copy that is strictly SMALLER is NOT
+    recommended — possible metadata/content loss (e.g. the Fröhlicher Kreis mp3)."""
+    import os
+
+    from deconflict.analyze import recommend
+    from deconflict.engine import Engine, EngineConfig
+
+    d = Path(tmp_path) / "scan"
+    d.mkdir()
+    base = d / "song.mp3"
+    copy = d / "song (conflicted copy 2020-01-01 000000).mp3"
+    # binary-ish content so kind != text; base bigger than copy
+    base.write_bytes(b"x" * 5000)
+    copy.write_bytes(b"y" * 1000)
+    os.utime(base, (1_000_000, 1_000_000))
+    os.utime(copy, (2_000_000, 2_000_000))
+    engine = Engine(
+        EngineConfig(
+            dirs=[d], backup_dir=Path(tmp_path) / "backup", cache_dir=Path(tmp_path) / "cache"
+        )
+    )
+    ga = next(ga for g, ga in engine.analyze(engine.scan()) if g.base is not None)
+    assert ga.kind != "text"
+    assert recommend(ga) is None  # newer but smaller -> not recommended
+
+
+def test_recommend_newer_and_larger_keeps_office(tmp_path):
+    """G2 (09-02): a newer, LARGER copy is still recommended (Kostenauflistung case)."""
+    import os
+
+    from deconflict.analyze import recommend
+    from deconflict.engine import Engine, EngineConfig
+
+    d = Path(tmp_path) / "scan"
+    d.mkdir()
+    base = d / "tabelle.xlsx"
+    copy = d / "tabelle (conflicted copy 2020-01-01 000000).xlsx"
+    base.write_bytes(b"x" * 1000)
+    copy.write_bytes(b"y" * 2000)
+    os.utime(base, (1_000_000, 1_000_000))
+    os.utime(copy, (2_000_000, 2_000_000))
+    engine = Engine(
+        EngineConfig(
+            dirs=[d], backup_dir=Path(tmp_path) / "backup", cache_dir=Path(tmp_path) / "cache"
+        )
+    )
+    ga = next(ga for g, ga in engine.analyze(engine.scan()) if g.base is not None)
+    rec = recommend(ga)
+    assert rec is not None
+    assert rec.is_base is False
+
+
+def test_consider_reports_reasoning_when_no_clear_winner(tmp_path):
+    """consider() logs newest/largest + why no recommendation, even on a no-winner group."""
+    import os
+
+    from deconflict.analyze import consider
+    from deconflict.engine import Engine, EngineConfig
+
+    d = Path(tmp_path) / "scan"
+    d.mkdir()
+    base = d / "song.mp3"
+    copy = d / "song (conflicted copy 2020-01-01 000000).mp3"
+    base.write_bytes(b"x" * 5000)
+    copy.write_bytes(b"y" * 1000)  # newer but smaller
+    os.utime(base, (1_000_000, 1_000_000))
+    os.utime(copy, (2_000_000, 2_000_000))
+    engine = Engine(
+        EngineConfig(
+            dirs=[d], backup_dir=Path(tmp_path) / "backup", cache_dir=Path(tmp_path) / "cache"
+        )
+    )
+    ga = next(ga for g, ga in engine.analyze(engine.scan()) if g.base is not None)
+    cons = consider(ga)
+    assert cons.recommendation is None
+    joined = " ".join(cons.notes)
+    assert "newest is" in joined
+    assert "largest is" in joined
+    assert "smaller than base" in joined  # explicit reason why no recommendation
+    assert "no clear recommendation" in joined
+
+
 def test_recommend_enter_picks_default(tmp_path):
     """G3: the menu surfaces the recommendation as an Enter default, and empty input picks it."""
     from unittest.mock import patch

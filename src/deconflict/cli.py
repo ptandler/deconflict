@@ -14,7 +14,7 @@ from rich.table import Table
 
 from . import __version__, render
 from .actions import actions_for
-from .analyze import GroupAnalysis
+from .analyze import GroupAnalysis, consider, recommend
 from .cache import clean_cache
 from .config import Config, default_path, load, write_init_config
 from .engine import Action, ActionKind, Engine
@@ -94,14 +94,27 @@ def _path_cell(engine: Engine, path: Path) -> str:
 def _scan_with_progress(
     engine: Engine, show_progress: bool, label: str | None = None
 ) -> ScanResult:
-    """Engine.scan() wrapped in a Rich progress bar when requested (else plain scan)."""
+    """Engine.scan() wrapped in a Rich progress bar when requested (else plain scan).
+
+    The filesystem walk has no known total up front, so the bar shows a live
+    counter + the current file (instead of an indeterminate spinner) so the user
+    sees forward movement.
+    """
     if not show_progress:
         return engine.scan()
     from rich.progress import Progress
 
+    count = {"n": 0}
     with Progress() as p:
-        task = p.add_task(label or "scanning", total=None)
-        return engine.scan(on_file=lambda _f: p.advance(task))
+        task = p.add_task(label or "scanning", total=1)
+        result = engine.scan(
+            on_file=lambda _f: (
+                count.__setitem__("n", count["n"] + 1),
+                p.update(task, description=f"scanning ({count['n']} files): {_f.name}"),
+            )
+        )
+        p.update(task, completed=1, description=f"scanned {count['n']} files")
+        return result
 
 
 def _require_dirs(cfg: Config) -> Engine:
@@ -568,34 +581,14 @@ def _apply(engine: Engine, group: ConflictGroup, action: Action) -> None:
 def _recommend(ga: GroupAnalysis) -> tuple[str, Action] | None:
     """A clear winner (label, keep-Action) or None.
 
-    - All files identical in content -> keep base.
-    - One file is strictly-newest AND, for text, its content is a superset of the
-      base's (added lines, none removed) -> keep that file.
+    Thin wrapper over the UI-free `analyze.recommend` that maps the winner to an
+    Action (keep base vs keep copy) for the CLI prompt.
     """
-    if ga.base is None:
+    rec = recommend(ga)
+    if rec is None:
         return None
-    if ga.all_equal:
-        return ("base (all files identical)", Action.keep_base())
-    items = [ga.base, *ga.copies]
-    newest = max(items, key=lambda a: a.info.mtime)
-    non_newest = [a for a in items if a is not newest]
-    if all(n.info.mtime < newest.info.mtime for n in non_newest):
-        if ga.kind == "text" and not _text_superset(ga.base.path, newest.path):
-            return None
-        if ga.base and newest is ga.base:
-            return (f"base '{ga.base.path.name}' (newest)", Action.keep_base())
-        return (f"copy '{newest.path.name}' (newest)", Action.keep_copy(newest.path))
-    return None
-
-
-def _text_superset(base: Path, newest: Path) -> bool:
-    """True when `newest`'s text contains all of `base`'s lines (plus something)."""
-    try:
-        a = set(base.read_text(encoding="utf-8", errors="replace").splitlines())
-        b = set(newest.read_text(encoding="utf-8", errors="replace").splitlines())
-    except OSError:
-        return False
-    return a <= b and a != b
+    action = Action.keep_base() if rec.is_base else Action.keep_copy(rec.winner.path)
+    return rec.label, action
 
 
 def _show_group(
@@ -621,11 +614,16 @@ def _show_group(
             tb = metadata_diff_table(ga, idx)
             if tb is not None:
                 console.print(tb)
-    rec = _recommend(ga)
-    if rec is not None:
-        label, _action = rec
-        console.print(f"[bold cyan]recommend: keep {escape(label)}[/bold cyan]")
-    return rec
+    # Reasoning: show what was evaluated (always), so the user understands WHY a
+    # recommendation is or isn't made (esp. the "no clear winner" cases).
+    cons = consider(ga)
+    if cons.notes:
+        console.print("[dim]considered:[/dim]")
+        for n_ in cons.notes:
+            console.print(f"  [dim]· {escape(n_)}[/dim]")
+    # Recommendation is surfaced ONLY via the (Enter) menu line (see _menu_text);
+    # printing it here too would duplicate it.
+    return _recommend(ga)
 
 
 def _prompt(
@@ -636,11 +634,14 @@ def _prompt(
         key: (label, tool) for key, label, tool in actions_for(engine, ga)
     }
     while True:
-        ans = input(_menu_text(engine, ga, rec)).strip().lower()
+        # Render the menu through Rich first so `[bold cyan]…[/bold cyan]` markup
+        # becomes real ANSI color codes; input() would otherwise print them raw.
+        console.print(_menu_text(engine, ga, rec), end="")
+        ans = input().strip().lower()
         if ans == "":
             if rec is not None:
                 return rec[1]
-            print("invalid choice")
+            print("invalid choice: there is no recommended version to keep")
             continue
         if ans.isdigit():
             action = _keep_by_number(ga, int(ans))
