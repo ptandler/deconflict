@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deconflict"
-version = "0.1.0"
+version = "1.0.0"
 description = "Interactive resolver for 'conflicted copy'-style sync conflict files (Nextcloud, pacman, Syncthing)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "deconflict contributors" }]
+authors = [{ name = "Peter Tandler" }]
 keywords = ["nextcloud", "syncthing", "pacman", "conflict", "sync", "resolve"]
 classifiers = [
     "Programming Language :: Python :: 3",
