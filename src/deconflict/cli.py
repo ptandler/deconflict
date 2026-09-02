@@ -432,9 +432,6 @@ def _run_interactive(engine: Engine, groups) -> None:
                     )
                     continue
                 engine.launch_tool(group, ga, action.tool or ToolType.VIEW, action.target)
-                if action.tool is ToolType.VIEW:
-                    console.print("[dim]press [bold]Enter[/bold] when done reviewing[/dim]")
-                    input()
                 continue
             if action.kind is ActionKind.SKIP:
                 skipped += 1

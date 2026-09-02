@@ -138,15 +138,45 @@ def test_view_edit_collapse_when_same_tool(sample_dir, tmp_path):
     assert not diff.view_edit_collapse("audio")  # player vs tag-editor differ
 
 
+def test_edit_command_office_opens_both(sample_dir, tmp_path):
+    """Edit for office (same app as view) opens BOTH files, not just the copy
+    (G4 ODT bug: edit must let the user compare, not open only one file)."""
+    from deconflict.launchers import Launcher, ToolType
+    from deconflict.tools import Tools
+
+    engine = _engine(sample_dir, tmp_path)
+    result = engine.scan()
+    g = next(g for g in result.groups if g.base and g.base.name.endswith(".ods"))
+    launcher = Launcher(Tools({"office": "/usr/bin/soffice"}))
+    cmd = launcher.command(g, ToolType.EDIT, g.conflicts[0])
+    assert cmd and cmd[0] == "/usr/bin/soffice"
+    assert str(g.conflicts[0]) in cmd and str(g.base) in cmd
+
+
 def test_launch_prints_full_command_paths(sample_dir, tmp_path, capsys, monkeypatch):
     """Loading a tool prints the FULL command incl. file paths (not just the exe)."""
     import deconflict.launchers as launchers_mod
 
     recorded: list[list[str]] = []
-    monkeypatch.setattr(launchers_mod.subprocess, "run", lambda cmd, **kw: recorded.append(cmd))
+    monkeypatch.setattr(launchers_mod.subprocess, "Popen", lambda cmd, **kw: recorded.append(cmd))
     launchers_mod._launch(["/usr/bin/editor", str(tmp_path / "a file.txt")])
     out = capsys.readouterr().out
     assert "launching:" in out
     assert "/usr/bin/editor" in out
     assert "a file.txt" in out
     assert recorded == [["/usr/bin/editor", str(tmp_path / "a file.txt")]]
+
+
+def test_launch_blocking_uses_run(sample_dir, tmp_path, capsys, monkeypatch):
+    """Blocking launches (e.g. keepass merge) use subprocess.run, not detach."""
+    import deconflict.launchers as launchers_mod
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        launchers_mod.subprocess, "Popen", lambda cmd, **kw: calls.append(("popen", cmd))
+    )
+    monkeypatch.setattr(
+        launchers_mod.subprocess, "run", lambda cmd, **kw: calls.append(("run", cmd))
+    )
+    launchers_mod._launch(["some-cli"], block=True)
+    assert calls == [("run", ["some-cli"])]

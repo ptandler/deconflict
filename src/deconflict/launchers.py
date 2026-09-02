@@ -48,12 +48,19 @@ KIND_META_EDIT_TOOL: dict[str, str] = {
 }
 
 
-def _launch(cmd: list[str]) -> None:
+def _launch(cmd: list[str], block: bool = False) -> None:
     # Show the full command (including the file paths being opened) so the user
     # knows exactly what tools act on which files — not just the executable.
     parts = [a if " " not in a and "'" not in a else f'"{a}"' for a in cmd]
     print("launching: " + " ".join(parts))
-    subprocess.run(cmd, check=False)
+    if block:
+        # Blocking: wait for the tool to exit (e.g. a headless merge recipe like
+        # keepassxc-cli merge, whose result the user decides on next).
+        subprocess.run(cmd, check=False)
+    else:
+        # Non-blocking GUI/player launch: detach so the app stays open and the
+        # interactive menu is free again (the user goes straight back to actions).
+        subprocess.Popen(cmd, start_new_session=True)
 
 
 def _sibling(group, target: Path) -> Path | None:
@@ -139,19 +146,22 @@ class Launcher:
 
     # -- command construction -----------------------------------------------
     def run(self, group, ga, tool: ToolType, target: Path) -> None:
-        """Run the tool(s) for `tool`. Only VIEW runs multiple detached commands; the
-        EDIT/DIFF/EDIT_META actions launch a single blocking command."""
+        """Run the tool(s) for `tool`. GUI launches are NON-blocking (detached) so
+        the app stays open and the interactive menu returns immediately; the only
+        blocking case is the kdbx keepass merge recipe, whose result the user must
+        see before deciding."""
         if tool is ToolType.VIEW:
             cmds = self.view_commands(group, target)
             if not cmds:
                 raise RuntimeError("no viewer/player available for this file type")
+            merge = file_kind(target) == "kdbx"
             for cmd in cmds:
-                _launch(cmd)
+                _launch(cmd, block=merge)
             return
         cmd = self.command(group, tool, target)
         if not cmd:
             raise RuntimeError(f"no tool configured for {tool.value}")
-        _launch(cmd)
+        _launch(cmd, block=False)
 
     def view_commands(self, group, target: Path) -> list[list[str]]:
         """Commands opening BOTH files (target + sibling) for comparison.
@@ -212,7 +222,15 @@ class Launcher:
     def _edit_cmd(self, group, target: Path) -> list[str] | None:
         kind = file_kind(target)
         exe = self._kind_exe(kind, self.edit_tool)
-        return [exe, str(target)] if exe else None
+        if not exe:
+            return None
+        # For single-app kinds (text/other/office) the same exe IS the viewer, so
+        # edit should open BOTH files side-by-side for comparison (not just the
+        # one copy) — fixes "edit opens only the copy" for ODT/doc same-app case.
+        if kind in ("text", "other", "office"):
+            sibling = _sibling(group, target)
+            return [exe, str(target), str(sibling)] if sibling else [exe, str(target)]
+        return [exe, str(target)]
 
     def _edit_meta_cmd(self, group, target: Path) -> list[str] | None:
         kind = file_kind(target)

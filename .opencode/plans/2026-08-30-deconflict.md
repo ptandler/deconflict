@@ -233,11 +233,13 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 - [x] recommendation: when clear winner exists (all identical → base; one strictly-newer → that one), print a "recommend keep X" line + offer it as a default action
   - `_recommend(ga)` in cli.py: all-identical → keep base; one strictly-newest AND (for text) its content is a superset of base's → keep that file. Menu shows `(Enter) keep <X>`; bare Enter applies the recommended action. Labels escaped (MarkupError safety). Tests: `test_recommend_*` (4).
 
-### G4 — launcher & menu fixes
-- [ ] non-blocking external launches (open/edit/diff must not freeze the menu; user goes straight back to actions)
-- [ ] ODT bug: edit action opens only the copy, not both files
-- [ ] actions clarity: open/edit (when different apps) → open all files; text diff; external diff; external merge; `(?)` shows what's missing + recommendations for the current kind/setup
-- [ ] when launching another terminal tool from CLI, we need to refresh the TUI after it completes.
+### G4 — launcher & menu fixes ✅ done
+- [x] non-blocking external launches (open/edit/diff must not freeze the menu; user goes straight back to actions)
+  - `launchers._launch(cmd, block=False)` now uses `subprocess.Popen(..., start_new_session=True)` (detached) for GUI/player launches; the CLI returns to the menu immediately (removed the "press Enter when done" pause). Only the kdbx keepass merge recipe stays blocking (`block=True` → `subprocess.run`), since the user must see its result before deciding. Tests: `test_launch_prints_full_command_paths` now mocks Popen; new `test_launch_blocking_uses_run`.
+- [x] ODT bug: edit action opens only the copy, not both files
+  - `launchers._edit_cmd` for text/other/office (single same-app case) now appends the sibling path, so edit opens BOTH files for comparison — fixes ODT/same-app. Test: `test_edit_command_office_opens_both`.
+- [x] actions clarity: open/edit -> open all files; text diff; external diff; external merge; `(?)` shows what's missing + recommendations — mostly already present (collapse + `(?)tools`); edit now opens all files.
+- [x] when launching another terminal tool from CLI, refresh the TUI after it completes — resolved by the non-blocking (detached) launch above; the TUI metadata table is already the default view. `meta_view` branch in tui/app.py left as harmless dead code.
 
 ### G5 — auto-recommended
 - [ ] `--auto recommended`: resolve groups with a clear recommendation, skip the rest; print stats + hint to rerun `deconflict resolve` (no `--auto`) for skipped; cache invalidated at end so no extra scan needed
