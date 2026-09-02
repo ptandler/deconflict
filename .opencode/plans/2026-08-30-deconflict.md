@@ -241,8 +241,9 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 - [x] actions clarity: open/edit -> open all files; text diff; external diff; external merge; `(?)` shows what's missing + recommendations — mostly already present (collapse + `(?)tools`); edit now opens all files.
 - [x] when launching another terminal tool from CLI, refresh the TUI after it completes — resolved by the non-blocking (detached) launch above; the TUI metadata table is already the default view. `meta_view` branch in tui/app.py left as harmless dead code.
 
-### G5 — auto-recommended
-- [ ] `--auto recommended`: resolve groups with a clear recommendation, skip the rest; print stats + hint to rerun `deconflict resolve` (no `--auto`) for skipped; cache invalidated at end so no extra scan needed
+### G5 — auto-recommended ✅ done
+- [x] `--auto recommended`: resolve groups with a clear recommendation, skip the rest; print stats + hint to rerun `deconflict resolve` (no `--auto`) for skipped; cache invalidated at end so no extra scan needed
+  - `_run_auto` routes `recommended` → `_run_auto_recommended`, which uses `_recommend(ga)` per group (resolves clear winners, skips the rest), prints `resolved N group(s) (M skipped)` + a `hint: re-run … interactively` line. `--auto` help updated to `base|copy|newest|bigger|recommended`. Test: `test_resolve_auto_recommended`.
 
 ### G6 — setup command
 - [ ] `deconflict setup`: analyze local setup, recommend installs (tools detection + INSTALL_HINTS), print how-to

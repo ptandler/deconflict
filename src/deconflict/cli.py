@@ -346,7 +346,9 @@ def resolve(
     pattern: str | None = typer.Option(None, "--pattern", help="One pattern group"),
     config: Path | None = typer.Option(None, "--config", help="Alternate config file"),
     auto: str | None = typer.Option(
-        None, "--auto", help="Non-interactive rule: base|copy|newest|bigger"
+        None,
+        "--auto",
+        help="Non-interactive rule: base|copy|newest|bigger|recommended",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview without touching the filesystem"
@@ -408,8 +410,37 @@ def _launch_tui(engine: Engine, groups) -> None:
 
 
 def _run_auto(engine: Engine, groups, rule: str) -> None:
+    if rule == "recommended":
+        _run_auto_recommended(engine, groups)
+        return
     for group, ga in groups:
         _apply(engine, group, engine.auto_choice(ga, rule))
+
+
+def _run_auto_recommended(engine: Engine, groups) -> None:
+    """Resolve only groups with a clear recommendation; skip the rest.
+
+    Prints stats and, when anything was skipped, hints to rerun interactively.
+    The engine invalidates the cache after real applies so no extra scan is needed.
+    """
+    resolved = 0
+    skipped = 0
+    for group, ga in groups:
+        rec = _recommend(ga)
+        if rec is None:
+            skipped += 1
+            continue
+        _apply(engine, group, rec[1])
+        resolved += 1
+    msg = f"[done]resolved {resolved} group(s)"
+    if skipped:
+        msg += f" ({skipped} skipped)"
+    console.print(msg)
+    if skipped:
+        console.print(
+            "[yellow]hint: re-run `deconflict resolve` (without --auto) to handle "
+            "the skipped group(s) interactively.[/yellow]"
+        )
 
 
 def _run_interactive(engine: Engine, groups) -> None:

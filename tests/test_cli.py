@@ -38,6 +38,21 @@ def test_resolve_auto_dry_run(sample_dir):
     assert "dry-run" in result.stdout
 
 
+def test_resolve_auto_recommended(tmp_path):
+    """G5: --auto recommended resolves only clear-winner groups and prints a skip hint."""
+    d = tmp_path / "scan"
+    d.mkdir()
+    (d / "same.txt").write_text("hello")
+    (d / "same (conflicted copy 2020-01-01 000000).txt").write_text("hello")
+    # copy drops a line (not a superset) => no recommendation -> skipped
+    (d / "navy.txt").write_text("a\nb\n")
+    (d / "navy (conflicted copy 2020-01-01 000000).txt").write_text("b\n")
+    result = runner.invoke(app, ["resolve", str(d), "--auto", "recommended", "--dry-run"])
+    assert result.exit_code == 0
+    assert "resolved 1 group(s) (1 skipped)" in result.stdout
+    assert "hint: re-run" in result.stdout
+
+
 def test_bare_defaults_to_tui_when_available(sample_dir, tmp_path, monkeypatch):
     """Bare `deconflict` launches the TUI when textual is installed."""
     import deconflict.cli as cli_mod
