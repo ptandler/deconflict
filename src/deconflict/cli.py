@@ -810,13 +810,22 @@ def _print_metadata_diff(ga: GroupAnalysis, idx: int) -> None:
     table.add_column(base_label, overflow="ellipsis")
     table.add_column(copy_label, overflow="ellipsis")
     # Generic attrs: dim the whole row when the two files' values are identical,
-    # matching how identical content rows are dimmed below.
+    # matching how identical content rows are dimmed below. Highlight the bigger
+    # size (bold) and the newer modified date (bold cyan) so the likely winner
+    # jumps out without reading the numbers.
     copy = ga.copies[idx]
     sizes_equal = ga.base.info.size == copy.info.size
+    bigger = (
+        "base"
+        if ga.base.info.size > copy.info.size
+        else "copy"
+        if copy.info.size > ga.base.info.size
+        else None
+    )
     table.add_row(
         ATTR_SIZE,
-        _size_meta_cell(ga.base.info.size, None),
-        _size_meta_cell(copy.info.size, ga.base.info.size),
+        _hl(_size_meta_cell(ga.base.info.size, None), bigger == "base"),
+        _hl(_size_meta_cell(copy.info.size, ga.base.info.size), bigger == "copy"),
         style="dim" if sizes_equal else None,
     )
     created_equal = bf.get(ATTR_CREATED) == cf.get(ATTR_CREATED)
@@ -827,10 +836,25 @@ def _print_metadata_diff(ga: GroupAnalysis, idx: int) -> None:
         style="dim" if created_equal else None,
     )
     modified_equal = bf.get(ATTR_MODIFIED) == cf.get(ATTR_MODIFIED)
+    newer = (
+        "base"
+        if ga.base.info.mtime > copy.info.mtime
+        else "copy"
+        if copy.info.mtime > ga.base.info.mtime
+        else None
+    )
     table.add_row(
         ATTR_MODIFIED,
-        escape(_truncate_meta(bf.get(ATTR_MODIFIED, ""))),
-        escape(_truncate_meta(cf.get(ATTR_MODIFIED, ""))),
+        _hl(
+            escape(_truncate_meta(bf.get(ATTR_MODIFIED, ""))),
+            newer == "base",
+            style="bold cyan",
+        ),
+        _hl(
+            escape(_truncate_meta(cf.get(ATTR_MODIFIED, ""))),
+            newer == "copy",
+            style="bold cyan",
+        ),
         style="dim" if modified_equal else None,
     )
 
@@ -855,6 +879,11 @@ def _row_cells(bf, cf, keys: list[str]) -> list[tuple[str, str, str]]:
             (k, escape(_truncate_meta(bf.get(k, ""))), escape(_truncate_meta(cf.get(k, ""))))
         )
     return out
+
+
+def _hl(cell: str, flag: bool, style: str = "bold") -> str:
+    """Wrap a rendered cell in Rich markup when the condition holds (else unchanged)."""
+    return f"[{style}]{cell}[/{style}]" if flag else cell
 
 
 def _size_meta_cell(size: int, other: int | None) -> str:

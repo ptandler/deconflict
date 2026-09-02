@@ -392,6 +392,53 @@ def test_version_command():
     assert result.stdout.strip() == "deconflict 0.1.0"
 
 
+def test_metadata_diff_highlights_newer_and_larger(tmp_path):
+    """G2: metadata diff table bolds the larger size cell and bold-cyans the
+    newer modified-date cell. Deterministic via os.utime."""
+    import re
+    from io import StringIO
+
+    from rich.console import Console
+
+    import deconflict.cli as cli
+    from deconflict.engine import Engine, EngineConfig
+
+    d = tmp_path / "hl"
+    d.mkdir()
+    base = d / "report.txt"
+    copy = d / "report (conflicted copy 2020-01-01 000000).txt"
+    base.write_text("x" * 100)
+    copy.write_text("x" * 500)  # larger AND newer
+    import os
+
+    os.utime(base, (1_000_000, 1_000_000))
+    os.utime(copy, (2_000_000, 2_000_000))
+
+    engine = Engine(
+        EngineConfig(dirs=[d], backup_dir=tmp_path / "backup", cache_dir=tmp_path / "cache")
+    )
+    analyzed = engine.analyze(engine.scan())
+    ga = next(ga for g, ga in analyzed if g.base is not None and g.base.name == "report.txt")
+
+    rec = Console(record=True, file=StringIO(), force_terminal=True, color_system="standard")
+    old, cli.console = cli.console, rec
+    try:
+        cli._print_metadata_diff(ga, 0)
+    finally:
+        cli.console = old
+    out = rec.export_text(styles=True)
+
+    def strip_ansi(line: str) -> str:
+        return re.sub(r"\x1b\[[0-9;]*m", "", line)
+
+    size_line = next(line for line in out.splitlines() if "bytes" in strip_ansi(line))
+    assert "1m" in size_line  # bold -> larger copy highlighted
+    mod_line = next(
+        line for line in out.splitlines() if "modified" in strip_ansi(line)
+    )
+    assert "1;36" in mod_line  # bold cyan -> newer copy highlighted
+
+
 def test_scan_shows_full_paths(sample_dir):
     """G1: scan table must print full file paths (not just basenames)."""
     result = runner.invoke(app, ["scan", str(sample_dir), "--no-progress"])

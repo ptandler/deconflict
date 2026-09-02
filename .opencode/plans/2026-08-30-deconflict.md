@@ -153,7 +153,7 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 
 ### G2 — table rendering polish (contained, render-side)
 - [x] `_meta_diff_columns` truncation keeps `start…tail` so the conflict-pattern suffix stays visible — already implemented on main (`_truncate_name` + `_META_HEADER_TAIL`); plan checkbox was stale
-- [ ] metadata compare table: newer dates highlighted, larger sizes highlighted/bold
+- [~] metadata compare table: newer dates highlighted, larger sizes highlighted/bold — implemented in `_print_metadata_diff` via new `_hl()` helper (larger size cell → **bold**, newer modified date cell → bold cyan, dim-when-equal kept); G2 test `test_metadata_diff_highlights_newer_and_larger` added (deterministic `os.utime`); **NOT yet verified/committed** — user stopped for today before final `mise run check`; uncommitted in working tree
 
 ### G3 — interactive flow revamp (primary UX)
 - [ ] drop the initial overview table; show the metadata compare table as the primary per-group view; remove the separate `(m)etadata` action; long filenames wrap; add a row for identical/changed content (brief diff)
