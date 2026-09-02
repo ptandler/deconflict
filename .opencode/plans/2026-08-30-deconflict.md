@@ -235,6 +235,7 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 - [ ] non-blocking external launches (open/edit/diff must not freeze the menu; user goes straight back to actions)
 - [ ] ODT bug: edit action opens only the copy, not both files
 - [ ] actions clarity: open/edit (when different apps) → open all files; text diff; external diff; external merge; `(?)` shows what's missing + recommendations for the current kind/setup
+- [ ] when launching another terminal tool from CLI, we need to refresh the TUI after it completes.
 
 ### G5 — auto-recommended
 - [ ] `--auto recommended`: resolve groups with a clear recommendation, skip the rest; print stats + hint to rerun `deconflict resolve` (no `--auto`) for skipped; cache invalidated at end so no extra scan needed
