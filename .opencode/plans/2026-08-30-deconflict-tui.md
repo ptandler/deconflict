@@ -9,10 +9,10 @@ second frontend that owns the interaction loop. Existing CLI (`deconflict`, `res
 `scan`, `--auto`) stays untouched and fully testable.
 
 ## Decisions (confirmed + refined by user)
-- **Framework**: Textual (Rich-native). Added as an **optional** dependency; bare CLI keeps
-  working with a bare install (guard the textual import behind the `tui` subcommand).
-- **Entrypoint**: new `deconflict tui` subcommand. Bare `deconflict` / `resolve` / `scan` /
-  `--auto` unchanged (CI + scripting parity).
+- **Framework**: Textual (Rich-native). Added as an **optional** dependency; bare install keeps working
+  (textual import guarded behind `_tui_available()`).
+- **Entrypoint**: `--tui/--no-tui` flags (v2 change, replaces the v1 `tui` subcommand). Bare `deconflict`
+  auto-selects TUI when installed, CLI otherwise; `resolve` defaults to CLI; `--auto` + `--tui` = error.
 - **Image preview (kitty/uneixel)**: **deferred to v2**. Note: TGP protocol probe must run
   *before* the Textual app starts; use `textual-image` in a follow-up with a `p` toggle.
 - **Main pane switchable** between Files table / inline Diff / Resolve-Log. `Ctrl+T` cycles
@@ -56,10 +56,10 @@ src/deconflict/tui/views.py      # GroupTable, FilesTable, DiffView, LogView wid
 src/deconflict/tui/actions.py    # ActionEntry model + build_actions()
 tests/test_tui.py                # 7 Pilot headless tests
 ```
-cli.py: `tui` subcommand (textual import guarded behind the subcommand).
+cli.py: `--tui/--no-tui` on `resolve` + bare-mode auto-TUI (`_tui_available`/`_launch_tui`).
 
 ## Implemented behaviors
-1. `deconflict tui [--dirs] [--config] [--dry-run]` → scan → populate left list.
+1. `deconflict resolve --tui [--dirs] [--config] [--dry-run]` / bare `deconflict` → scan → populate left list.
 2. Select group (arrow keys / mouse click) → files table in main pane.
 3. `Ctrl+T` / mouse buttons cycle Files | Diff | Log tabs.
 4. Action buttons (mouse + hotkey); kind-driven per `actions_for()`.
@@ -90,7 +90,7 @@ Existing 96 tests unchanged; `mise run check` (ruff check + format-check + pytes
 
 ## TodoList
 - [x] Persist this plan
-- [x] Add `textual` optional dep + `deconflict tui` subcommand hook
+- [x] Add `textual` optional dep + `--tui/--no-tui` entrypoint hook (v2 replaced the `tui` subcommand)
 - [x] Refactor diff/metadata printers to shared Rich renderables (`render.py`)
 - [x] Extract `actions_for()` into shared `actions.py` module
 - [x] Scaffold `tui/` package (app/views/actions)

@@ -10,7 +10,7 @@ Syncthing `.sync-conflict-*`. Generic, pattern-driven, future TUI/GUI-ready.
 ## Decisions (agreed)
 - Name: **deconflict** (PyPI + command + module). Package runs from any dir; repo dir will be renamed (rename happens on restart).
 - Stack: Python >=3.11 (dev 3.13) · Typer (CLI) · Rich (colors/progress/live) · ruff (lint+format) · pytest · hatchling · uv + mise · GitHub Actions (MIT).
-- Logic UI-free in `engine.py` → later Textual TUI (`tui` subcommand) / PySide GUI reuse it.
+- Logic UI-free in `engine.py` → Textual TUI via bare `deconflict` (auto, if `textual` installed) or `resolve --tui`; PySide GUI would reuse it too.
 - Patterns shipped: `nextcloud` (on, disable-able), `pacman`, `syncthing` (on). `dpkg`, `rpm`, `windows-copy` shipped disabled. Custom regex patterns in config.
 - Disposal: NEVER hard-delete. Losers **moved** to backup dir OUTSIDE scan roots (`~/deconflict-backups/...`), configurable. `--dry-run` must not touch FS. JSONL decision log.
 - KeePass: `.kdbx` → recipe launching `keepassxc-cli merge` (dry-run preview → real merge → discard copy). Verified: keepassxc-cli 2.7.12 `merge database database2`.
@@ -33,7 +33,9 @@ Infra      paths.py tools.py config.py(TOML) patterns.py scan.py analyze.py
 Command model (mirrors git/gh/uv):
 - `deconflict scan` — explicit, single-purpose, scriptable, exits
 - `deconflict resolve --auto <rule>` — explicit, non-interactive, exits
-- `deconflict resolve` / `deconflict` — **interactive driver that internally calls scan + resolve**
+- `deconflict resolve` — interactive CLI driver (scan + resolve)
+- `deconflict resolve --tui` — interactive TUI driver (`--no-tui` forces CLI; `--auto` + `--tui` is an error)
+- `deconflict` (bare) — interactive driver (**TUI when `textual` installed, else CLI**), internally calls scan + resolve
 - `deconflict patterns | init-config`
 - `deconflict config [--path FILE]` — print the effective config (like `mise config`)
 - `--config FILE` option (on scan/resolve + bare) to point at an alternate config file

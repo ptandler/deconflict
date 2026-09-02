@@ -38,7 +38,8 @@ from .render import (
 from .scan import ConflictGroup
 
 app = typer.Typer(
-    help="Resolve 'conflicted copy'-style sync conflict files. No args = interactive resolve.",
+    help="Resolve 'conflicted copy'-style sync conflict files. "
+    "No args = interactive resolve (TUI if available, else CLI).",
     add_completion=False,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -103,11 +104,19 @@ def _root(
     ctx: typer.Context,
     config: Path | None = typer.Option(None, "--config", help="Alternate config file"),
 ) -> None:
-    """Run interactive resolve when invoked with no subcommand."""
+    """Run interactive resolve when invoked with no subcommand.
+
+    Uses TUI when the optional 'textual' dependency is installed; falls back
+    to the CLI interactive loop otherwise.  Pass `resolve --tui` or
+    `resolve --no-tui` to override.
+    """
     ctx.obj = config
     if ctx.invoked_subcommand is None:
         engine, groups = _collect_groups(None, [], config)
-        _run_interactive(engine, groups)
+        if _tui_available():
+            _launch_tui(engine, groups)
+        else:
+            _run_interactive(engine, groups)
         _invalidate_cache(engine)
 
 
@@ -297,8 +306,14 @@ def resolve(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview without touching the filesystem"
     ),
+    use_tui: bool | None = typer.Option(
+        None, "--tui/--no-tui", help="Use TUI or CLI (default: CLI; bare mode: TUI if available)"
+    ),
 ) -> None:
     """Resolve conflicts. Losers move to backup (never hard-deleted). --auto = non-interactive."""
+    if auto and use_tui is True:
+        console.print("[red]--auto and --tui are mutually exclusive.[/red]")
+        raise typer.Exit(2)
     cfg = _cfg(ctx.obj or config, pattern, dirs)
     if dry_run:
         cfg.engine.dry_run = True
@@ -311,43 +326,35 @@ def resolve(
     groups = engine.analyze(result)
     if auto:
         _run_auto(engine, groups, auto)
+    elif use_tui is True:
+        _launch_tui(engine, groups)
     else:
         _run_interactive(engine, groups)
     _invalidate_cache(engine)
 
 
-@app.command()
-def tui(
-    ctx: typer.Context,
-    dirs: list[Path] = typer.Argument(None, help="Directories (default: config)"),
-    pattern: str | None = typer.Option(None, "--pattern", help="One pattern group"),
-    config: Path | None = typer.Option(None, "--config", help="Alternate config file"),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Preview without touching the filesystem"
-    ),
-) -> None:
-    """Launch the interactive Textual TUI (needs the optional 'tui' extra)."""
+def _tui_available() -> bool:
+    """Check whether the optional Textual TUI extra is installed."""
     try:
-        from .tui.app import DeconflictApp
-    except ImportError as exc:  # textual not installed
+        import textual  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _launch_tui(engine: Engine, groups) -> None:
+    """Launch the Textual TUI; raises typer.Exit(1) if textual is missing."""
+    if not _tui_available():
         console.print(
             "[red]TUI requires the optional dependency `textual`.[/red] "
             "Install it with: `uv sync --extra tui` or `pip install deconflict[tui]`."
         )
-        raise typer.Exit(1) from exc
-    cfg = _cfg(ctx.obj or config, pattern, dirs)
-    if dry_run:
-        cfg.engine.dry_run = True
-    engine = _require_dirs(cfg)
-    _report_scan(engine)
-    result = engine.scan()
-    if not result:
-        console.print("[green]no conflicts to resolve[/green]")
-        raise typer.Exit(0)
-    groups = engine.analyze(result)
-    app = DeconflictApp(engine, groups)
-    app.run()
-    _invalidate_cache(engine)
+        raise typer.Exit(1)
+    from .tui.app import DeconflictApp
+
+    tui_app = DeconflictApp(engine, groups)
+    tui_app.run()
 
 
 def _run_auto(engine: Engine, groups, rule: str) -> None:

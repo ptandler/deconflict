@@ -38,6 +38,71 @@ def test_resolve_auto_dry_run(sample_dir):
     assert "dry-run" in result.stdout
 
 
+def test_bare_defaults_to_tui_when_available(sample_dir, tmp_path, monkeypatch):
+    """Bare `deconflict` launches the TUI when textual is installed."""
+    import deconflict.cli as cli_mod
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
+    monkeypatch.setattr(
+        cli_mod, "_launch_tui", lambda engine, groups: calls.append((engine, groups))
+    )
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    engine, groups = calls[0]
+    assert len(groups) == 6
+
+
+def test_resolve_tui_flag_launches_tui(sample_dir, monkeypatch):
+    """`resolve --tui` launches the TUI app instead of the CLI loop."""
+    import deconflict.cli as cli_mod
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
+    monkeypatch.setattr(
+        cli_mod, "_launch_tui", lambda engine, groups: calls.append((engine, groups))
+    )
+    result = runner.invoke(app, ["resolve", str(sample_dir), "--tui"])
+    assert result.exit_code == 0
+    assert len(calls) == 1
+
+
+def test_resolve_tui_missing_extra_errors(sample_dir, monkeypatch):
+    """`resolve --tui` without textual installed exits 1 with install guidance."""
+    import deconflict.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: False)
+    result = runner.invoke(app, ["resolve", str(sample_dir), "--tui"])
+    assert result.exit_code == 1
+    assert "textual" in result.stdout
+    assert "--extra tui" in result.stdout
+
+
+def test_resolve_auto_tui_conflict(sample_dir, monkeypatch):
+    """`--auto` and `--tui` are mutually exclusive -> exit 2 before any action."""
+    import deconflict.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
+    result = runner.invoke(app, ["resolve", str(sample_dir), "--auto", "newest", "--tui"])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.stdout
+
+
+def test_resolve_no_tui_forces_cli_loop(sample_dir, tmp_path, monkeypatch):
+    """`resolve --no-tui` runs the CLI loop even when the TUI is installed."""
+    import deconflict.cli as cli_mod
+    import deconflict.config as config_mod
+
+    monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
+    monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
+    result = runner.invoke(app, ["resolve", "--no-tui", "--dry-run"], input="s\n" * 10)
+    assert result.exit_code == 0
+    assert "resolved 0 group(s) (6 skipped)" in result.stdout
+
+
 def test_init_config_writes(tmp_path):
     target = tmp_path / "cfg" / "config.toml"
     result = runner.invoke(app, ["init-config", "--path", str(target)])
@@ -211,7 +276,7 @@ def _home_cfg(tmp_path, sample_dir) -> str:
     return str(cfgfile)
 
 
-def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch):
+def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch, force_cli):
     """`deconflict` with no subcommand runs the interactive loop (todo: bare mode)."""
     import deconflict.config as config_mod
 
@@ -226,7 +291,7 @@ def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch):
     assert files_after == files_before
 
 
-def test_interactive_quit_prints_summary(sample_dir, tmp_path, monkeypatch):
+def test_interactive_quit_prints_summary(sample_dir, tmp_path, monkeypatch, force_cli):
     import deconflict.config as config_mod
 
     monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
@@ -234,7 +299,7 @@ def test_interactive_quit_prints_summary(sample_dir, tmp_path, monkeypatch):
     assert "aborted after 0 of 6 group(s)" in result.stdout
 
 
-def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch):
+def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch, force_cli):
     """(?)tools prints the tool map, then the loop continues."""
     import deconflict.config as config_mod
 
@@ -245,7 +310,7 @@ def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch):
     assert "tools:" in result.stdout
 
 
-def test_interactive_table_has_flags(sample_dir, tmp_path, monkeypatch):
+def test_interactive_table_has_flags(sample_dir, tmp_path, monkeypatch, force_cli):
     """The group table shows #-role, size(+delta), mtime, and metadata (no suggest)."""
     import deconflict.config as config_mod
 
@@ -268,7 +333,7 @@ def test_bare_no_dirs_explains(tmp_path, monkeypatch):
     assert "init-config" in result.stdout
 
 
-def test_interactive_metadata_menu_option(sample_dir, tmp_path, monkeypatch):
+def test_interactive_metadata_menu_option(sample_dir, tmp_path, monkeypatch, force_cli):
     """First group is the mp3 (metadata differs) so (m)etadata shows a base/copy table."""
     import deconflict.config as config_mod
 
@@ -299,7 +364,7 @@ def test_truncate_meta():
     assert _truncate_meta(None) == "∅"
 
 
-def test_interactive_office_metadata_cell_truncated(sample_dir, tmp_path, monkeypatch):
+def test_interactive_office_metadata_cell_truncated(sample_dir, tmp_path, monkeypatch, force_cli):
     """An office copy's metadata cell shows truncated content, not raw XML."""
     import deconflict.config as config_mod
 

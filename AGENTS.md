@@ -1,6 +1,6 @@
 # AGENTS.md — deconflict
 
-Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `.pacnew/.pacsave/.pacorig`, Syncthing `.sync-conflict-*`). CLI = Typer + Rich; core logic is UI-free so a future Textual TUI / PySide GUI can reuse it.
+Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `.pacnew/.pacsave/.pacorig`, Syncthing `.sync-conflict-*`). CLI = Typer + Rich, TUI = Textual (optional extra); core logic is UI-free so a PySide GUI could reuse it too.
 
 ## Main plan
 Read `.opencode/plans/2026-08-30-deconflict.md` first — it contains the decisions, structure, behavior, and current todo list. This file is the quick reference for conventions.
