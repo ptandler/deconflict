@@ -245,8 +245,9 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 - [x] `--auto recommended`: resolve groups with a clear recommendation, skip the rest; print stats + hint to rerun `deconflict resolve` (no `--auto`) for skipped; cache invalidated at end so no extra scan needed
   - `_run_auto` routes `recommended` → `_run_auto_recommended`, which uses `_recommend(ga)` per group (resolves clear winners, skips the rest), prints `resolved N group(s) (M skipped)` + a `hint: re-run … interactively` line. `--auto` help updated to `base|copy|newest|bigger|recommended`. Test: `test_resolve_auto_recommended`.
 
-### G6 — setup command
-- [ ] `deconflict setup`: analyze local setup, recommend installs (tools detection + INSTALL_HINTS), print how-to
+### G6 — setup command ✅ done
+- [x] `deconflict setup`: analyze local setup, recommend installs (tools detection + INSTALL_HINTS), print how-to
+  - New `@app.command("setup")` (added to `_TOP_LEVEL_COMMANDS`): prints version, config/backup/cache dirs, scan dirs (warns when none), TUI availability, per-tool found/missing + install hints, a missing-tools summary, and next-steps (init-config / config / config tools). Test: `test_setup_command`.
 
 ### G7 — performance & architecture (investigation + proposal)
 - [ ] investigate slow startup with 62 cached groups: add stage timing/log output (scan/analyze/render), verify read-once semantics

@@ -269,6 +269,61 @@ def config_tools(
     _print_tools_footer(cfg_path)
 
 
+@app.command("setup")
+def setup_cmd(
+    ctx: typer.Context,
+    config: Path | None = typer.Option(None, "--config", help="Alternate config file"),
+) -> None:
+    """Analyze the local setup and recommend installs (tools detection + hints)."""
+    cfg = load(config or ctx.obj)
+    engine = Engine(cfg.engine)
+    console.print(f"[bold]deconflict {__version__}[/bold]")
+    console.print(f"  config file: {escape(str(cfg.engine.config_path or default_path()))}")
+    console.print(f"  backup dir:  {escape(str(cfg.engine.backup_dir))}")
+    console.print(f"  cache dir:   {escape(str(cfg.engine.cache_dir))}")
+    dirs = engine.cfg.dirs
+    if dirs:
+        console.print(f"  scan dirs:   {', '.join(escape(str(p)) for p in dirs)}")
+    else:
+        console.print(
+            "  [yellow]scan dirs: none — run `deconflict init-config` and set "
+            "[scan].default_dirs[/yellow]"
+        )
+    if _tui_available():
+        console.print("  TUI: [green]available[/green] (textual installed)")
+    else:
+        console.print(
+            "  TUI: [yellow]not installed[/yellow] — bare `deconflict` falls back to "
+            "the CLI loop (install textual for the GUI)"
+        )
+    console.print()
+    console.print("[bold]external tools:[/bold]")
+    missing = 0
+    for name, found, candidates, hint in engine.tool_status():
+        if found:
+            console.print(f"  [green]{name}[/green]: {escape(found)}")
+        else:
+            missing += 1
+            suffix = f"  ({escape(hint)})" if hint else ""
+            console.print(
+                f"  [red]{name}[/red]: missing ({', '.join(escape(c) for c in candidates)}){suffix}"
+            )
+    console.print()
+    if missing:
+        console.print(
+            f"[yellow]{missing} tool(s) missing.[/yellow] Install the recommended ones "
+            "above (see each hint). The (?)tools action and `deconflict config tools` "
+            "list what each file kind actually uses."
+        )
+    else:
+        console.print("[green]all tools found.[/green]")
+    console.print()
+    console.print("[bold]next steps:[/bold]")
+    console.print("  - `deconflict init-config`  -> write a documented config template")
+    console.print("  - `deconflict config`       -> print the effective config")
+    console.print("  - `deconflict config tools` -> which tool opens each file type")
+
+
 @app.command()
 def scan(
     ctx: typer.Context,
@@ -724,7 +779,7 @@ def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
 
 
 _TOP_LEVEL_COMMANDS = frozenset(
-    {"patterns", "init-config", "config", "scan", "cache", "resolve", "version"}
+    {"patterns", "init-config", "config", "scan", "cache", "resolve", "version", "setup"}
 )
 
 

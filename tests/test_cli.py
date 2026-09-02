@@ -596,6 +596,16 @@ def test_scan_progress_flag_forced(sample_dir):
     assert "conflict group(s)" in result.stdout
 
 
+def test_setup_command():
+    """G6: `deconflict setup` analyzes the local setup and prints status + next steps."""
+    result = runner.invoke(app, ["setup"])
+    assert result.exit_code == 0
+    assert "deconflict" in result.stdout
+    assert "external tools" in result.stdout
+    assert "next steps" in result.stdout
+    assert "init-config" in result.stdout
+
+
 def _rec_group(tmp_path: str, base_text: str, copy_text: str, *, copy_newer: bool = True):
     """Build a scan dir with one text group; return (engine, GroupAnalysis)
     with deterministic mtimes."""
