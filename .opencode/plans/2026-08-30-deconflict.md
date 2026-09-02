@@ -249,9 +249,46 @@ proposal), then office-diff research (deliverable = researched note + feasible i
 - [x] `deconflict setup`: analyze local setup, recommend installs (tools detection + INSTALL_HINTS), print how-to
   - New `@app.command("setup")` (added to `_TOP_LEVEL_COMMANDS`): prints version, config/backup/cache dirs, scan dirs (warns when none), TUI availability, per-tool found/missing + install hints, a missing-tools summary, and next-steps (init-config / config / config tools). Test: `test_setup_command`.
 
-### G7 — performance & architecture (investigation + proposal)
-- [ ] investigate slow startup with 62 cached groups: add stage timing/log output (scan/analyze/render), verify read-once semantics
-- [ ] architectural proposal: 3-stage pipeline (scan FS → read metadata → resolve) with parallel workers + optional `fd` backend; document in plan, stub interfaces if feasible
+### G7 — performance & architecture (investigation + proposal) ✅ done
+- [x] investigate slow startup with 62 cached groups: add stage timing/log output (scan/analyze/render), verify read-once semantics
+  - Added `_print_times()` stage timing to `resolve` + `_collect_groups` (bare): prints `scan X.Xs, analyze Y.Ys (total Z.Zs)` after analysis. Verified on the sample files: `scan 0.0s (cache reused), analyze 5.3s` for just 6 groups — **the cost is `analyze`, i.e. per-file metadata extraction via ExifTool (~0.5s/subprocess per file), which the file cache does NOT cover** (cache stores size/mtime/sha/is_text only). Scan itself is negligible with the cache.
+  - Read-once verified: `analyze_group` computes `ga.meta_fields` once (stored on the `GroupAnalysis`); the primary view / `metadata_diff_table` / `_diff_fields` all read those stored dicts — no re-extraction on menu navigation. The only re-read is `_recommend`'s cheap text-superset check (text kinds, strict-newest candidate only).
+  - Test: `test_resolve_prints_stage_timing`.
+- [x] architectural proposal: 3-stage pipeline (scan FS → read metadata → resolve) with parallel workers + optional `fd` backend — see proposal below.
+
+### Architectural proposal (G7) — 3-stage pipeline for parallelism
+
+**Problem:** startup is dominated by synchronous, per-file metadata extraction (ExifTool ≈0.5s/file). Today it all runs serially inside `engine.analyze()`.
+
+**Three stages (loosely coupled, pipe-connected):**
+```
+ S1 scan    S2 metadata    S3 resolve
+ FS walk   per-file meta   interactive/auto
+ (find/fd) (workers)        (waits on S2)
+    |           |                ^
+    └── stream ─┘ stream of       │
+        conflict groups ─────────┘
+```
+- **S1 (scan FS):** walks configured dirs producing `ConflictGroup`s. Optional backend: if `fd` (or `fdfind`) is on PATH, use it as the fast file listing source; else fall back to the current recursive `Path.rglob` walk. Deterministic ordering, no other behaviour change.
+- **S2 (read metadata):** a small worker pool (`ThreadPoolExecutor`) that consumes groups from S1 as they stream in and computes `GroupAnalysis` incl. `meta_fields`. Independent groups are trivially parallel; ExifTool is batch-able (submit many paths to one `exiftool` process — the ~0.5s/process overhead collapses to ~1 process per batch).
+- **S3 (resolve):** starts as an iterator over S2's completed analyses; the CLI can begin rendering/acting on the first ready group without waiting for all of them. Interactive menu stays pull-to-render (`yield`).
+
+**Decoupling without a rewrite:** today `analyze()` is `list[...]` — fully materialized before resolve. Step 1 (already partly true) is that the frontends only *pull* one group at a time from `groups`. Making `engine` expose a generator `stream_groups()` (S1 feed), `analyze_stream()` (S2, threaded), and keeping `_run_interactive` a pull-based consumer lets the pipeline be added incrementally. Stub interface:
+
+```
+class Pipeline:
+    def scan_groups(self, on_file=None) -> Iterator[ConflictGroup]   # S1 (fd or rglob)
+    def analyze(self, groups) -> Iterator[tuple[GroupAnalysis]]      # S2 (ThreadPool + batched exiftool)
+    def resolve(self, frontend) -> None                               # S3 (pull-based)
+```
+
+**Config for it:** `[scan].use_fd=auto` (auto/fd/never), `[general].metadata_workers=N` (default os.cpu_count(), capped). A follow-up implementation can land behind these flags without changing the current serial path as the default.
+
+**Recommendation (implementation order):**
+1. Batch ExifTool: one subprocess for all audio/image/video files of a scan instead of one per file — biggest single win, no pipeline needed.
+2. Thread the `analyze` loop (`ThreadPoolExecutor.map`) — easy, safe (files are independent).
+3. Optional `fd` backend for S1.
+4. True streaming generator pipeline (S1→S2→S3) for as-soon-as-ready resolve.
 
 ### G8 — office diff research
 - [ ] research office-format diff tools (text-conversion + GUI diff) and implement the feasible part

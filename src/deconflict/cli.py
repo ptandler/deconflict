@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import typer
@@ -160,13 +161,26 @@ def _collect_groups(
     """Scan + analyze; `engine` is returned so callers can invalidate the cache."""
     engine = _require_dirs(_cfg(config_path, pattern, dirs))
     _report_scan(engine)
+    t0 = time.perf_counter()
     result = _scan_with_progress(
         engine, sys.stdout.isatty() if show_progress is None else show_progress
     )
+    t_scan = time.perf_counter()
     if not result:
         console.print("[green]no conflicts found[/green]")
         raise typer.Exit(0)
-    return engine, engine.analyze(result)
+    groups = engine.analyze(result)
+    t_analyze = time.perf_counter()
+    _print_times(t0, t_scan, t_analyze)
+    return engine, groups
+
+
+def _print_times(t0: float, t_scan: float, t_analyze: float) -> None:
+    """Item: stage timing so a slow startup's cost is attributable (scan vs analyze)."""
+    console.print(
+        f"[dim]  scan {t_scan - t0:.1f}s, analyze {t_analyze - t_scan:.1f}s "
+        f"(total {t_analyze - t0:.1f}s)[/dim]"
+    )
 
 
 def _report_scan(engine: Engine) -> None:
@@ -426,11 +440,15 @@ def resolve(
         cfg.engine.dry_run = True
     engine = _require_dirs(cfg)
     _report_scan(engine)
+    t0 = time.perf_counter()
     result = _scan_with_progress(engine, sys.stdout.isatty() if progress is None else progress)
+    t_scan = time.perf_counter()
     if not result:
         console.print("[green]no conflicts to resolve[/green]")
         raise typer.Exit(0)
     groups = engine.analyze(result)
+    t_analyze = time.perf_counter()
+    _print_times(t0, t_scan, t_analyze)
     if auto:
         _run_auto(engine, groups, auto)
     elif use_tui is True:

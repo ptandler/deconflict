@@ -606,6 +606,15 @@ def test_setup_command():
     assert "init-config" in result.stdout
 
 
+def test_resolve_prints_stage_timing(sample_dir):
+    """G7: resolve prints stage timing (scan/analyze) so a slow startup is attributable."""
+    result = runner.invoke(app, ["resolve", str(sample_dir), "--dry-run"], input="q\n")
+    assert result.exit_code == 0
+    assert "scan " in result.stdout
+    assert ", analyze " in result.stdout
+    assert "total" in result.stdout
+
+
 def _rec_group(tmp_path: str, base_text: str, copy_text: str, *, copy_newer: bool = True):
     """Build a scan dir with one text group; return (engine, GroupAnalysis)
     with deterministic mtimes."""
