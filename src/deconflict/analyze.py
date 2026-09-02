@@ -151,7 +151,7 @@ def consider(ga: GroupAnalysis) -> Consideration:
     )
     notes.append(
         f"largest is {_file_tag(largest, ga.base, ga.copies)} {_human(largest.path)} "
-        f"({largest.info.size} B) vs base {ga.base.info.size} B"
+        f"({largest.info.size} B; base is {ga.base.info.size} B)"
     )
     if ga.all_equal:
         notes.append("all files identical in content")

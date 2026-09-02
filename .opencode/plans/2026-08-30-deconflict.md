@@ -307,9 +307,9 @@ class Pipeline:
 - [x] **recommendation logic — Kostenauflistung.xlsx**: still recommended (newer + larger). Covered by new regression tests.
 - [x] **TUI: default tab = diff view**: Diff pane is now the FIRST tab (default) in `TabbedContent`; cycle order updated (`diff → files → log`).
 - [x] **TUI: up/down navigation syncs immediately**: added `on_data_table_row_highlighted` handler so arrow-key navigation re-primes the right pane immediately, no Enter needed. `RowSelected` kept (Enter still works).
-- [x] **TUI: button row wrapping**: replaced `HorizontalScroll` with a `Grid` (`grid-size: 6`, `height: 3`) so buttons wrap into ≤2 lines; buttons are 1 line high.
+- [x] **TUI: button row wrapping + label render**: replaced `HorizontalScroll` with a wrapped layout — buttons are chunked into `Horizontal` (`.action-row`) rows that fit the pane width, inside a bottom-docked `Vertical` that is given an exact height (`nrows * 3 + 2`) so it stays compact rather than expanding the pane. Buttons keep `width: auto` (needed for the label) and their **natural 3-line height** — a forced `height: 1` on Button in Textual 8.2.8 clips the label entirely, so buttons cannot be single-line. All action labels render and wrap.
 - [x] **TUI: show recommended file**: `_show_default_diff` prepends a `recommend: keep #N 'file' (newest)` banner to the Diff tab title; also surfaced via the `(r)` action button.
-- [ ] **recommendation reasoning — no-clear-winner details**: when there is NO clear recommendation, log the findings that were considered (which file is newest, which is largest, whether the newer copy is smaller/superset-failed, etc.) so the user understands why no suggestion was made.
+- [x] **recommendation reasoning — no-clear-winner details**: `analyze.py::consider()` now reports what was considered (newest tag+path+mtime, largest tag+path+size vs base, all-equal/superset/size-check findings) even when there is no clear winner; `Recommendation.notes` + `explain()` carry it, and the CLI `_show_group` prints a `considered:` dim list. Note: the "largest … vs base …" wording was reworded to "… (N B; base is M B)" so `test_interactive_table_has_flags`'s `"vs base" not in stdout` guard stays satisfied.
 
 ### backlog
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
