@@ -708,7 +708,7 @@ def _print_tools(engine: Engine, ga: GroupAnalysis) -> None:
     _print_tools_footer(cfg_path)
 
 
-_TOP_LEVEL_COMMANDS = frozenset({"patterns", "init-config", "config", "scan", "cache", "resolve"})
+_TOP_LEVEL_COMMANDS = frozenset({"patterns", "init-config", "config", "scan", "cache", "resolve", "version"})
 
 
 def main() -> None:
