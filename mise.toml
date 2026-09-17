@@ -6,6 +6,10 @@ uv = "latest"
 description = "Lint + format-check + tests (CI does the same)"
 run = ["uv run ruff check .", "uv run ruff format --check .", "uv run pytest"]
 
+[tasks.version]
+description = "Show and manage package versions"
+run = "uv version"
+
 [tasks.devenv]
 description = "Install editable into global uv PATH for local testing"
 run = "uv tool install --editable ."
