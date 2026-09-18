@@ -4,7 +4,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Error: Uncommitted changes detected. Commit or stash them first."
   exit 1
 fi
-#uv run pytest
+mise run check
 echo "Bump version to $*"
 uv version --bump "$*"
 version="v$(uv version --short)"
