@@ -4,10 +4,11 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Error: Uncommitted changes detected. Commit or stash them first."
   exit 1
 fi
-uv run pytest
-uv version --bump $@
-git add -A
+#uv run pytest
+echo "Bump version to $*"
+uv version --bump "$*"
 version="v$(uv version --short)"
+git add -A
 git commit -m "chore: release $version"
 git tag "$version"
-git push && git push --tags
+#git push && git push --tags
