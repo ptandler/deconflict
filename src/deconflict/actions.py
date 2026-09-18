@@ -34,7 +34,12 @@ def actions_for(engine: Engine, ga: GroupAnalysis) -> list[tuple[str, str, ToolT
         if view:
             a.append(("v", "view", ToolType.VIEW))
         if k == "text":
-            a.append(("d", "diff", "term_diff"))
+            # Prefer an external GUI diff (meld/WinMerge) when installed; fall
+            # back to the inline char-level terminal diff otherwise.
+            if la.graphical_diff(k):
+                a.append(("d", "diff", ToolType.DIFF))
+            else:
+                a.append(("d", "diff", "term_diff"))
         if edit:
             a.append(("e", "edit", ToolType.EDIT))
     elif k == "audio":

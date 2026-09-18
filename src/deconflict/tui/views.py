@@ -113,16 +113,21 @@ def _fmt_dt(t: float) -> str:
 
 
 class DiffView(VerticalScroll):
-    """Right pane 'Diff' tab: shows a Rich renderable (text diff / metadata table)."""
+    """Right pane 'Diff'/'Meta' tab: shows a Rich renderable (table / diff / help).
+
+    Multiple instances coexist (Meta + Diff tabs), so inner widget ids are
+    derived from this view's own id to stay unique.
+    """
 
     def __init__(self, id: str | None = None) -> None:
         super().__init__(id=id)
+        self._prefix = id or "diff"
         self._title: Static | None = None
         self._static: Static | None = None
 
     def compose(self) -> ComposeResult:
-        self._title = Static("", id="diff-title")
-        self._static = Static("[dim]no diff yet — press (d)iff or select a group[/dim]")
+        self._title = Static("", id=f"{self._prefix}-title")
+        self._static = Static("[dim]nothing here yet[/dim]", id=f"{self._prefix}-body")
         yield self._title
         yield self._static
 

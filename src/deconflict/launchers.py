@@ -101,6 +101,27 @@ class Launcher:
             return True
         return self.tools.get("exiftool") is not None
 
+    def graphical_diff(self, kind: str) -> bool:
+        """True when the configured diff tool is a GUI diff (meld/WinMerge).
+
+        Frontends then launch it as an external tool instead of rendering the
+        inline terminal diff.
+        """
+        if kind not in ("text", "other"):
+            return False
+        exe = self.tools.get("diff")
+        return exe is not None and self._is_graphical_diff(exe)
+
+    def runs_in_terminal(self, tool: ToolType, kind: str) -> bool:
+        """True when `tool` launches a foreground terminal program for `kind`.
+
+        Text/other files open in the configured editor, which is typically a
+        terminal editor (vi/nano/fresh) that needs the terminal to itself — the
+        TUI suspends around those. GUI launches (meld, LibreOffice, players) stay
+        detached.
+        """
+        return kind in ("text", "other") and tool in (ToolType.VIEW, ToolType.EDIT)
+
     def edit_meta_available(self, kind: str) -> bool:
         return kind in KIND_META_EDIT_TOOL and self._kind_exe(kind, self.edit_tool) is not None
 
@@ -145,23 +166,28 @@ class Launcher:
         return list(dict.fromkeys(keys))
 
     # -- command construction -----------------------------------------------
-    def run(self, group, ga, tool: ToolType, target: Path) -> None:
-        """Run the tool(s) for `tool`. GUI launches are NON-blocking (detached) so
-        the app stays open and the interactive menu returns immediately; the only
-        blocking case is the kdbx keepass merge recipe, whose result the user must
-        see before deciding."""
+    def run(self, group, ga, tool: ToolType, target: Path, blocking: bool | None = None) -> None:
+        """Run the tool(s) for `tool`.
+
+        GUI launches are NON-blocking (detached) so the app stays open and the
+        interactive menu returns immediately; the only default blocking case is
+        the kdbx keepass merge recipe, whose result the user must see before
+        deciding. Pass `blocking=True` to force a foreground run (e.g. a terminal
+        editor that needs the terminal to itself) or `False` to force a detach.
+        """
         if tool is ToolType.VIEW:
             cmds = self.view_commands(group, target)
             if not cmds:
                 raise RuntimeError("no viewer/player available for this file type")
             merge = file_kind(target) == "kdbx"
+            block = merge if blocking is None else blocking
             for cmd in cmds:
-                _launch(cmd, block=merge)
+                _launch(cmd, block=block)
             return
         cmd = self.command(group, tool, target)
         if not cmd:
             raise RuntimeError(f"no tool configured for {tool.value}")
-        _launch(cmd, block=False)
+        _launch(cmd, block=False if blocking is None else blocking)
 
     def view_commands(self, group, target: Path) -> list[list[str]]:
         """Commands opening BOTH files (target + sibling) for comparison.

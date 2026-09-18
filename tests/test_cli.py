@@ -7,6 +7,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from deconflict import __version__
 from deconflict.cli import app
 
 runner = CliRunner()
@@ -525,13 +526,13 @@ def test_metadata_attr_rows_dim_when_identical(sample_dir, tmp_path):
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == "deconflict 0.1.0"
+    assert result.stdout.strip() == f"deconflict {__version__}"
 
 
 def test_version_command():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == "deconflict 0.1.0"
+    assert result.stdout.strip() == f"deconflict {__version__}"
 
 
 def test_metadata_diff_highlights_newer_and_larger(tmp_path):

@@ -180,3 +180,58 @@ def test_launch_blocking_uses_run(sample_dir, tmp_path, capsys, monkeypatch):
     )
     launchers_mod._launch(["some-cli"], block=True)
     assert calls == [("run", ["some-cli"])]
+
+
+def test_launcher_graphical_and_terminal_helpers():
+    """meld/WinMerge are graphical; text/other editors need the terminal."""
+    from deconflict.launchers import Launcher, ToolType
+
+    la = Launcher(Tools({"diff": "/usr/bin/meld", "editor": "/usr/bin/fresh"}))
+    assert la.graphical_diff("text") is True
+    assert la.graphical_diff("other") is True
+    assert la.graphical_diff("office") is False
+    assert la.runs_in_terminal(ToolType.EDIT, "text") is True
+    assert la.runs_in_terminal(ToolType.VIEW, "other") is True
+    assert la.runs_in_terminal(ToolType.VIEW, "office") is False
+    assert la.runs_in_terminal(ToolType.DIFF, "text") is False
+    plain = Launcher(Tools({"diff": "/usr/bin/diff"}))
+    assert plain.graphical_diff("text") is False
+
+
+def test_text_diff_prefers_graphical_diff(sample_dir, tmp_path):
+    """actions_for uses the external GUI diff for text when one is available."""
+    from deconflict.actions import actions_for
+    from deconflict.launchers import ToolType
+
+    engine = _engine_with(sample_dir, tmp_path, {"diff": "/usr/bin/meld"})
+    groups = engine.analyze(engine.scan())
+    _g, ga = next((g, a) for g, a in groups if a.kind == "text")
+    by_key = {k: t for k, _l, t in actions_for(engine, ga)}
+    assert by_key["d"] is ToolType.DIFF
+
+
+def test_text_diff_falls_back_to_terminal(sample_dir, tmp_path):
+    """Without a GUI diff tool, text diff stays the inline terminal diff."""
+    from deconflict.actions import actions_for
+
+    # A non-graphical diff tool (or none) keeps the inline terminal diff.
+    engine = _engine_with(sample_dir, tmp_path, {"diff": "/usr/bin/diff"})
+    groups = engine.analyze(engine.scan())
+    _g, ga = next((g, a) for g, a in groups if a.kind == "text")
+    by_key = {k: t for k, _l, t in actions_for(engine, ga)}
+    assert by_key["d"] == "term_diff"
+
+
+def test_launcher_run_forces_blocking(sample_dir, tmp_path, monkeypatch):
+    """run(blocking=True) foregrounds a launch (terminal editor under suspend)."""
+    import deconflict.launchers as launchers_mod
+    from deconflict.launchers import ToolType
+
+    calls: list[bool] = []
+    monkeypatch.setattr(launchers_mod, "_launch", lambda cmd, block=False: calls.append(block))
+    engine = _engine_with(sample_dir, tmp_path, {"editor": "/usr/bin/fresh"})
+    groups = engine.analyze(engine.scan())
+    g, ga = next((g, a) for g, a in groups if a.kind == "text")
+    target = ga.copies[0].path if ga.copies else ga.base.path
+    engine.launcher().run(g, ga, ToolType.EDIT, target, blocking=True)
+    assert calls == [True]

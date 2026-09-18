@@ -12,15 +12,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, TabbedContent, TabPane
 
 from ..analyze import recommend
+from ..config import default_path
 from ..engine import Action
 from ..launchers import ToolType
-from ..render import metadata_diff_table, office_diff_lines, text_diff_lines
+from ..render import metadata_diff_table, office_diff_lines, text_diff_lines, tools_help
 from .actions import (
+    CONFIG_HELP,
     KEEP_BASE,
     KEEP_BOTH,
     KEEP_COPY,
@@ -77,6 +79,8 @@ class DeconflictApp(App):
     BINDINGS = [
         ("q", "quit_app", "Quit"),
         ("ctrl+t", "cycle_tab", "Files/Diff/Log"),
+        ("ctrl+up", "prev_group", "Prev group"),
+        ("ctrl+down", "next_group", "Next group"),
     ]
 
     def __init__(self, engine: Engine, groups: list[tuple[ConflictGroup, GroupAnalysis]]):
@@ -111,10 +115,12 @@ class DeconflictApp(App):
                 yield GroupTable(id="groups")
             with Vertical(id="right"):
                 with TabbedContent(id="tabs"):
-                    with TabPane("Diff", id="tab-diff"):
-                        yield DiffView(id="diff")
+                    with TabPane("Meta", id="tab-meta"):
+                        yield DiffView(id="meta")
                     with TabPane("Files", id="tab-files"):
                         yield FilesTable(id="files")
+                    with TabPane("Diff", id="tab-diff"):
+                        yield DiffView(id="diff")
                     with TabPane("Log", id="tab-log"):
                         yield LogView(id="log")
                 yield Vertical(id="actions")
@@ -129,7 +135,8 @@ class DeconflictApp(App):
         group, ga = self.groups[index]
         self.query_one("#groups", GroupTable).move_cursor(row=index)
         self.query_one("#files", FilesTable).show(ga)
-        self._show_default_diff(group, ga)
+        self._show_meta(group, ga)
+        self._reset_diff()
         self.log_view().write(
             f"[bold]— group {index + 1}/{len(self.groups)}: "
             f"{group.base.name if group.base else group.key}[/bold]"
@@ -137,9 +144,9 @@ class DeconflictApp(App):
         self._render_actions(group, ga)
         self._update_subtitle()
 
-    def _show_default_diff(self, group: ConflictGroup, ga: GroupAnalysis) -> None:
-        """Prime the Diff tab with the metadata table for the selected group."""
-        diff = self.query_one("#diff", DiffView)
+    def _show_meta(self, group: ConflictGroup, ga: GroupAnalysis) -> None:
+        """Prime the Meta tab with the metadata table for the selected group."""
+        meta = self.query_one("#meta", DiffView)
         rec = recommend(ga)
         banner = ""
         if rec is not None:
@@ -147,9 +154,15 @@ class DeconflictApp(App):
         if ga.base is not None and ga.copies:
             table = metadata_diff_table(ga, 0)
             title = f"{banner}metadata diff — {group.base.name}"
-            diff.show_renderable(title, table or "[dim]no metadata[/dim]")
+            meta.show_renderable(title, table or "[dim]no metadata[/dim]")
         else:
-            diff.show_renderable(f"{banner}metadata diff", "[dim]no base/copy to compare[/dim]")
+            meta.show_renderable(f"{banner}metadata diff", "[dim]no base/copy to compare[/dim]")
+
+    def _reset_diff(self) -> None:
+        """Clear the Diff tab so a previous group's diff never looks current."""
+        self.query_one("#diff", DiffView).show_renderable(
+            "diff", "[dim]press (d)iff for a text/office diff[/dim]"
+        )
 
     def on_data_table_row_highlighted(self, event) -> None:
         """Arrow-key navigation: sync the right pane immediately (no Enter needed)."""
@@ -191,7 +204,9 @@ class DeconflictApp(App):
             box.mount(hrow)  # mount first so we can add buttons into it
             for entry in row:
                 self._action_seq += 1
-                btn_id = f"act-{self._action_seq}-{entry.hotkey}"
+                # Hotkeys may be non-identifier chars (e.g. "?"), so the button id
+                # is the monotonic sequence only.
+                btn_id = f"act-{self._action_seq}"
                 btn = Button(f"({entry.hotkey}) {entry.label}", id=btn_id)
                 btn.variant = self._button_variant(entry.kind)
                 self.action_map[btn_id] = entry
@@ -242,10 +257,22 @@ class DeconflictApp(App):
 
     def action_cycle_tab(self) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
-        order = ["tab-diff", "tab-files", "tab-log"]
+        order = ["tab-meta", "tab-files", "tab-diff", "tab-log"]
         cur = tabs.active
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "tab-diff"
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "tab-meta"
         tabs.active = nxt
+
+    def action_next_group(self) -> None:
+        for i in range(self.current_index + 1, len(self.groups)):
+            if self.groups[i][0].key not in self.status:
+                self._select_index(i)
+                return
+
+    def action_prev_group(self) -> None:
+        for i in range(self.current_index - 1, -1, -1):
+            if self.groups[i][0].key not in self.status:
+                self._select_index(i)
+                return
 
     # -- dispatch -----------------------------------------------------------
     def dispatch(self, entry: ActionEntry) -> None:
@@ -275,8 +302,13 @@ class DeconflictApp(App):
             self._render_diff(entry.kind, group, target)
         elif entry.kind == "meta_view":
             self._render_meta(ga)
+        elif entry.kind == CONFIG_HELP:
+            self._render_config_help(ga)
         elif entry.kind == "tool" and entry.tool is not None:
-            self._launch_tool(group, ga, entry.tool)
+            if self.engine.launcher().runs_in_terminal(entry.tool, ga.kind):
+                self._launch_tool_foreground(group, ga, entry.tool)
+            else:
+                self._launch_tool(group, ga, entry.tool)
 
     def apply_resolve(self, action: Action, group: ConflictGroup, ga: GroupAnalysis) -> None:
         log = self.log_view()
@@ -336,12 +368,20 @@ class DeconflictApp(App):
         self._activate("tab-diff")
 
     def _render_meta(self, ga: GroupAnalysis) -> None:
-        diff = self.query_one("#diff", DiffView)
+        meta = self.query_one("#meta", DiffView)
         if ga.base is not None and ga.copies:
             table = metadata_diff_table(ga, 0)
-            diff.show_renderable("metadata diff", table or "[dim]no extractable metadata[/dim]")
+            meta.show_renderable("metadata diff", table or "[dim]no extractable metadata[/dim]")
         else:
-            diff.show_renderable("metadata diff", "[yellow]nothing to compare[/yellow]")
+            meta.show_renderable("metadata diff", "[yellow]nothing to compare[/yellow]")
+        self._activate("tab-meta")
+
+    def _render_config_help(self, ga: GroupAnalysis) -> None:
+        """Show the tools configured for the current group's kind (like CLI `?`)."""
+        la = self.engine.launcher()
+        cfg_path = self.engine.cfg.config_path or default_path()
+        table = tools_help(la, self.engine.tools, ga.kind, cfg_path)
+        self.query_one("#diff", DiffView).show_renderable(f"config — {ga.kind}", table)
         self._activate("tab-diff")
 
     @work(thread=True)
@@ -355,6 +395,29 @@ class DeconflictApp(App):
             self.engine.launch_tool(group, ga, tool, target)
         except Exception as exc:  # noqa: BLE001
             self.call_from_thread(self._log, f"[red]tool error: {exc}[/red]")
+
+    def _launch_tool_foreground(
+        self, group: ConflictGroup, ga: GroupAnalysis, tool: ToolType
+    ) -> None:
+        """Run a terminal program (text editor) with the TUI suspended.
+
+        Runs on the main thread so `App.suspend()` can hand the terminal back;
+        the editor then owns the screen and the TUI resumes when it exits.
+        """
+        target = ga.copies[0].path if ga.copies else (ga.base.path if ga.base else None)
+        if target is None:
+            self._log("[yellow]nothing to open[/yellow]")
+            return
+        self._log(f"[bold]pausing TUI for {tool.value}: {target.name}[/bold]")
+        try:
+            with self.suspend():
+                self.engine.launch_tool(group, ga, tool, target, blocking=True)
+        except SuspendNotSupported:
+            self.engine.launch_tool(group, ga, tool, target, blocking=True)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[red]tool error: {exc}[/red]")
+        finally:
+            self.refresh()
 
     # -- helpers ------------------------------------------------------------
     def log_view(self) -> LogView:

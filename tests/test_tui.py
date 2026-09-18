@@ -106,16 +106,60 @@ def test_tab_cycle(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             tabs = app.query_one("#tabs")
-            assert tabs.active == "tab-diff"
+            assert tabs.active == "tab-meta"
             await pilot.press("ctrl+t")
             await pilot.pause()
             assert tabs.active == "tab-files"
             await pilot.press("ctrl+t")
             await pilot.pause()
+            assert tabs.active == "tab-diff"
+            await pilot.press("ctrl+t")
+            await pilot.pause()
             assert tabs.active == "tab-log"
             await pilot.press("ctrl+t")
             await pilot.pause()
-            assert tabs.active == "tab-diff"
+            assert tabs.active == "tab-meta"
+
+    asyncio.run(_run())
+
+
+def test_ctrl_up_down_skips_decided_groups(tmp_path):
+    engine, groups = _make_groups(tmp_path)
+    from deconflict.tui.app import DeconflictApp
+
+    async def _run():
+        app = DeconflictApp(engine, groups)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.current_index == 0
+            # ctrl+down -> next undecided group (1)
+            await pilot.press("ctrl+down")
+            await pilot.pause()
+            assert app.current_index == 1
+            # skip group 1; _advance returns to first undecided (0)
+            await pilot.press("s")
+            await pilot.pause()
+            assert app.current_index == 0
+            assert app.skipped == 1
+            # ctrl+down must hop over skipped group 1 straight to 2
+            await pilot.press("ctrl+down")
+            await pilot.pause()
+            assert app.current_index == 2
+            # ctrl+up must hop back over skipped group 1 to 0
+            await pilot.press("ctrl+up")
+            await pilot.pause()
+            assert app.current_index == 0
+            # now skip 0 too; _advance lands on first undecided = 2
+            await pilot.press("s")
+            await pilot.pause()
+            assert app.current_index == 2
+            # ctrl+down from 2 -> 3, ctrl+up from 3 -> 2
+            await pilot.press("ctrl+down")
+            await pilot.pause()
+            assert app.current_index == 3
+            await pilot.press("ctrl+up")
+            await pilot.pause()
+            assert app.current_index == 2
 
     asyncio.run(_run())
 
@@ -172,14 +216,63 @@ def test_arrow_keys_sync_selection_and_diff(tmp_path):
             await pilot.press("down")
             await pilot.pause()
             assert app.current_index == 1, f"expected index 1, got {app.current_index}"
-            # Right pane diff view should have been re-primed for the new group
-            diff = app.query_one("#diff")
-            static = diff.query_one("#diff-title")
+            # Meta pane should have been re-primed for the new group
+            meta = app.query_one("#meta")
+            static = meta.query_one("#meta-title")
             text = str(static.render())
-            assert text.strip(), "diff title should be populated after arrow navigation"
+            assert text.strip(), "meta title should be populated after arrow navigation"
             # Press up arrow -> back to group 0
             await pilot.press("up")
             await pilot.pause()
             assert app.current_index == 0, f"expected index 0, got {app.current_index}"
+
+    asyncio.run(_run())
+
+
+def test_meta_tab_persists_after_diff(tmp_path):
+    """The Meta tab keeps the metadata table when the Diff tab renders a text diff."""
+    engine, groups = _make_groups(tmp_path)
+    from deconflict.tui.app import DeconflictApp
+
+    async def _run():
+        app = DeconflictApp(engine, groups)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            meta_title = str(app.query_one("#meta-title").render())
+            # Render a text diff directly (avoids launching an external diff tool).
+            group, ga = app.groups[app.current_index]
+            target = ga.copies[0].path if ga.copies else ga.base.path
+            app._render_diff("term_diff", group, target)
+            await pilot.pause()
+            # Diff tab activated, Meta tab content unchanged
+            assert app.query_one("#tabs").active == "tab-diff"
+            assert str(app.query_one("#meta-title").render()) == meta_title
+
+    asyncio.run(_run())
+
+
+def test_config_help_action_shows_tools(tmp_path):
+    """The (?) config action renders the current kind's tool mapping."""
+    import io
+
+    from rich.console import Console
+
+    engine, groups = _make_groups(tmp_path)
+    from deconflict.tui.app import DeconflictApp
+
+    async def _run():
+        app = DeconflictApp(engine, groups)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("?")
+            await pilot.pause()
+            assert app.query_one("#tabs").active == "tab-diff"
+            title = str(app.query_one("#diff-title").render())
+            assert "config" in title
+            buf = io.StringIO()
+            visual = app.query_one("#diff-body").render()
+            renderable = getattr(visual, "_renderable", visual)
+            Console(file=buf, width=120).print(renderable)
+            assert "file kind" in buf.getvalue()
 
     asyncio.run(_run())

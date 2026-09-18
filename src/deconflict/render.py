@@ -315,3 +315,38 @@ def office_diff_lines(other: Path, target: Path) -> list[Text] | None:
             color = "dim"
         out.append(Text(line, style=color))
     return out
+
+
+def tools_help(launcher, tools, kind: str, config_path: Path) -> Table:
+    """Renderable listing the tools backing `kind` (found/missing + hints).
+
+    Shared by the CLI (?)tools action and the TUI config action. The
+    launcher/tools objects are passed in (not imported here) so render.py stays
+    dependency-light and UI-free.
+    """
+    table = Table(
+        title=f"tools for file kind: {kind}",
+        title_justify="left",
+        show_header=False,
+        box=None,
+        caption=escape(
+            f"configure in {config_path} — sections [tools], [file_types], [file_types_edit]"
+        ),
+        caption_justify="left",
+    )
+    table.add_column(style="bold", no_wrap=True)
+    table.add_column()
+    table.add_row("view", launcher.kind_tool(kind))
+    table.add_row("edit", launcher.edit_tool(kind))
+    for key in launcher.tools_for(kind):
+        found = tools.get(key)
+        if found:
+            table.add_row(key, Text(found, style="green"))
+        else:
+            hint = tools.hint(key)
+            suffix = f"  ({hint})" if hint else ""
+            table.add_row(
+                key,
+                Text(f"missing ({', '.join(tools.candidates(key))}){suffix}", style="red"),
+            )
+    return table

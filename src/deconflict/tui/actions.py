@@ -27,6 +27,7 @@ KEEP_BOTH = "keep_both"
 SKIP = "skip"
 QUIT = "quit"
 RECOMMENDED = "recommended"
+CONFIG_HELP = "config_help"
 # Inline (handled by the frontend using shared render) kinds.
 _DIFF = "term_diff"
 _OFFICE_DIFF = "office_diff"
@@ -62,5 +63,6 @@ def build_actions(engine: Engine, ga: GroupAnalysis) -> list[ActionEntry]:
             entries.append(ActionEntry(hotkey, label, "tool", tool=tool))
         else:  # inline tag (term_diff / office_diff / meta_view)
             entries.append(ActionEntry(hotkey, label, str(tool)))
+    entries.append(ActionEntry("?", "config", CONFIG_HELP))
     entries.append(ActionEntry("q", "quit", QUIT))
     return entries

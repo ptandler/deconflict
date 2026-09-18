@@ -180,10 +180,16 @@ class Engine:
         return Launcher(self.tools, self.cfg.file_type_tools, self.cfg.file_type_edit_tools)
 
     def launch_tool(
-        self, group: ConflictGroup, ga: GroupAnalysis, tool: ToolType, target: Path
+        self,
+        group: ConflictGroup,
+        ga: GroupAnalysis,
+        tool: ToolType,
+        target: Path,
+        blocking: bool | None = None,
     ) -> None:
-        """Run an external tool on `target` and wait for it to exit (blocking)."""
-        self.launcher().run(group, ga, tool, target)
+        """Run an external tool on `target`. `blocking=True` forces a foreground
+        run (used by the TUI to suspend around a terminal editor)."""
+        self.launcher().run(group, ga, tool, target, blocking=blocking)
 
     def suggest(self, path: Path) -> ToolType:
         """The tool a frontend should suggest for `path`, based on its type."""
