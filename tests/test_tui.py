@@ -8,7 +8,7 @@ from pathlib import Path
 
 from deconflict.engine import Engine, EngineConfig
 
-SAMPLE = Path(__file__).resolve().parent.parent / "sample files"
+SAMPLE = Path(__file__).resolve().parent.parent / "sample-files"
 
 
 def _make_groups(tmp_path: Path):

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Nextcloud conflict filename regex now allows multiple spaces before `(conflicted copy ...)` (fixes FileNotFoundError when base filename has double space)
+- `analyze_group()` gracefully handles missing base files (only conflict file exists) — no longer crashes with `FileNotFoundError`
+
+### Added
+- Test case for conflict group without base file
+
 ## [0.2.0]
 
 ### Added

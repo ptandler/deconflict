@@ -3,7 +3,7 @@
 
 [scan]
 # Directories scanned recursively when no --dir is given.
-default_dirs = ["/tmp/p/deconf/sample files/"]
+default_dirs = ["/tmp/p/deconf/sample-files/"]
 
 # Pattern groups enabled by name (see PATTERNS in patterns.py + custom below).
 enabled_patterns = ["nextcloud", "pacman", "syncthing"]

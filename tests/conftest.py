@@ -1,4 +1,4 @@
-"""Shared fixtures: copy the real `sample files/` fixtures into a tmp dir."""
+"""Shared fixtures: copy the real `sample-files/` fixtures into a tmp dir."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from deconflict.cache import clean_cache
 from deconflict.engine import EngineConfig
 from deconflict.paths import expand
 
-SAMPLE = Path(__file__).resolve().parent.parent / "sample files"
+SAMPLE = Path(__file__).resolve().parent.parent / "sample-files"
 
 
 def _default_cache_dir() -> Path:
@@ -22,10 +22,13 @@ def _default_cache_dir() -> Path:
 
 def _copy_all(dst: Path) -> list[Path]:
     dst.mkdir(parents=True, exist_ok=True)
-    for src in sorted(SAMPLE.iterdir()):
+    for src in sorted(SAMPLE.rglob("*")):
         if src.is_file():
-            shutil.copy2(src, dst / src.name)
-    return list(dst.iterdir())
+            rel = src.relative_to(SAMPLE)
+            target = dst / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+    return list(dst.rglob("*"))
 
 
 @pytest.fixture

@@ -245,15 +245,16 @@ def analyze_group(
     group, base: Path | None, conflicts: list[Path], tools: dict[str, str] | None = None
 ) -> GroupAnalysis:
     analyses: list[FileAnalysis] = []
-    if base is not None:
+    base_exists = base is not None and base.exists()
+    if base_exists:
         analyses.append(FileAnalysis(base, _info(base)))
     for c in conflicts:
         match = group.matches.get(c)
         stamp = getattr(match, "stamp", None) if match is not None else None
         analyses.append(FileAnalysis(c, _info(c), name_stamp=stamp))
 
-    base_a = analyses[0] if base is not None else None
-    copies = analyses[1:] if base is not None else analyses
+    base_a = analyses[0] if base_exists else None
+    copies = analyses[1:] if base_exists else analyses
 
     hashes = {a.path.name: a.info.sha for a in analyses}
     sizes = {a.path.name: a.info.size for a in analyses}

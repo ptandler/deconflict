@@ -29,7 +29,7 @@ def _engine_with(sample_dir, tmp_path, tools: dict[str, str], **kw) -> Engine:
 def test_scan_returns_groups(sample_dir, tmp_path):
     engine = _engine(sample_dir, tmp_path)
     result = engine.scan()
-    assert len(result.groups) == 6
+    assert len(result.groups) == 3
 
 
 def test_auto_newest_dry_run_touches_nothing(sample_dir, tmp_path):

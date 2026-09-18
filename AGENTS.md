@@ -23,7 +23,7 @@ src/deconflict/  cli.py(typer) engine.py(UI-free) scan.py patterns.py analyze.py
                  media.py resolve.py cache.py tools.py paths.py launchers.py config.py
                  render.py(Rich renderables) actions.py(shared action matrix)
                  tui/   app.py views.py actions.py (Textual, optional)
-tests/           pytest; fixtures = COPIES of "sample files/" in tmpdir — never write into "sample files/"
+tests/           pytest; fixtures = COPIES of "sample-files/" in tmpdir — never write into "sample-files/"
 .opencode/plans/ project plans (main plan + tui-specific plan)
 ```
 

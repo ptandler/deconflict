@@ -11,4 +11,6 @@ build/
 .DS_Store
 *.local.toml
 
-sample files/
+sample-files-personal/
+
+dc_test/

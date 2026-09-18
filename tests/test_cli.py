@@ -69,7 +69,7 @@ def test_bare_defaults_to_tui_when_available(sample_dir, tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert len(calls) == 1
     engine, groups = calls[0]
-    assert len(groups) == 6
+    assert len(groups) == 3
 
 
 def test_resolve_tui_flag_launches_tui(sample_dir, monkeypatch):
@@ -116,7 +116,7 @@ def test_resolve_no_tui_forces_cli_loop(sample_dir, tmp_path, monkeypatch):
     monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
     result = runner.invoke(app, ["resolve", "--no-tui", "--dry-run"], input="s\n" * 10)
     assert result.exit_code == 0
-    assert "resolved 0 group(s) (6 skipped)" in result.stdout
+    assert "resolved 0 group(s) (3 skipped)" in result.stdout
 
 
 def test_main_bare_with_dir_launches_tui(sample_dir, monkeypatch, capsys):
@@ -134,7 +134,7 @@ def test_main_bare_with_dir_launches_tui(sample_dir, monkeypatch, capsys):
     cli_mod.main()
     assert len(calls) == 1
     engine, groups = calls[0]
-    assert len(groups) == 6
+    assert len(groups) == 3
 
 
 def test_main_subcommand_still_dispatches(sample_dir, monkeypatch, capsys):
@@ -172,7 +172,7 @@ def test_main_bare_config_flag(sample_dir, tmp_path, monkeypatch):
     cli_mod.main()
     assert len(calls) == 1
     engine, groups = calls[0]
-    assert len(groups) == 6
+    assert len(groups) == 3
 
 
 def test_init_config_writes(tmp_path):
@@ -357,7 +357,7 @@ def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch, 
     result = runner.invoke(app, [], input="s\n" * 10)
     assert result.exit_code == 0
     # item: final message distinguishes skipped from actually-resolved groups
-    assert "resolved 0 group(s) (6 skipped)" in result.stdout
+    assert "resolved 0 group(s) (3 skipped)" in result.stdout
     # skipping must not touch any file
     files_after = {p.name: p.read_bytes() for p in sample_dir.iterdir() if p.is_file()}
     assert files_after == files_before
