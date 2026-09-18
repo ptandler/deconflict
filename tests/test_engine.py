@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from testdata import EXPECTED_GROUPS
+
 from deconflict.engine import Action, ActionKind, Engine, EngineConfig
 from deconflict.tools import Tools
-from testdata import EXPECTED_GROUPS
 
 
 def _engine(sample_dir, tmp_path, **kw) -> Engine:

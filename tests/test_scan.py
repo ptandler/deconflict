@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from deconflict.patterns import build_patterns
-from deconflict.scan import group_conflicts, scan
 from testdata import (
     EXPECTED_GROUPS,
     EXPECTED_NEXTCLOUD_GROUPS,
     NEXTCLOUD_BASE_NAMES,
 )
+
+from deconflict.patterns import build_patterns
+from deconflict.scan import group_conflicts, scan
 
 PATTERNS = build_patterns()
 

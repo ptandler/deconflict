@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from testdata import IMAGE_BASE_PREFIX
+
 from deconflict.analyze import analyze_group
 from deconflict.patterns import build_patterns
 from deconflict.scan import scan
-from testdata import IMAGE_BASE_PREFIX
 
 PATTERNS = build_patterns()
 
@@ -51,9 +52,9 @@ def test_sizes_and_hashes_populated(sample_dir):
 
 def test_analyze_group_without_base_file(tmp_path):
     """Test analyzing a group where only conflict file exists (no base)."""
+    from deconflict.analyze import analyze_group
     from deconflict.patterns import build_patterns
     from deconflict.scan import scan
-    from deconflict.analyze import analyze_group
 
     PATTERNS = build_patterns()
     # Create only a conflict file, no base

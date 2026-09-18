@@ -5,11 +5,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from testdata import EXPECTED_GROUPS
 from typer.testing import CliRunner
 
 from deconflict import __version__
 from deconflict.cli import app
-from testdata import EXPECTED_GROUPS
 
 runner = CliRunner()
 
