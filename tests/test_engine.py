@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from deconflict.engine import Action, ActionKind, Engine, EngineConfig
 from deconflict.tools import Tools
+from testdata import EXPECTED_GROUPS
 
 
 def _engine(sample_dir, tmp_path, **kw) -> Engine:
@@ -29,7 +30,7 @@ def _engine_with(sample_dir, tmp_path, tools: dict[str, str], **kw) -> Engine:
 def test_scan_returns_groups(sample_dir, tmp_path):
     engine = _engine(sample_dir, tmp_path)
     result = engine.scan()
-    assert len(result.groups) == 3
+    assert len(result.groups) == EXPECTED_GROUPS
 
 
 def test_auto_newest_dry_run_touches_nothing(sample_dir, tmp_path):

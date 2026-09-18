@@ -5,6 +5,7 @@ from __future__ import annotations
 from deconflict.analyze import analyze_group
 from deconflict.patterns import build_patterns
 from deconflict.scan import scan
+from testdata import IMAGE_BASE_PREFIX
 
 PATTERNS = build_patterns()
 
@@ -32,7 +33,7 @@ def test_identical_copies_are_equal(tmp_path):
 
 def test_media_files_are_not_text(sample_dir):
     result = scan([sample_dir], PATTERNS)
-    img = next(g for g in result.groups if g.base.name.startswith("IMG"))
+    img = next(g for g in result.groups if g.base.name.startswith(IMAGE_BASE_PREFIX))
     ga = analyze_group(img, img.base, img.conflicts)
     assert ga.all_text is False
 

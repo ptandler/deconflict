@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from deconflict import __version__
 from deconflict.cli import app
+from testdata import EXPECTED_GROUPS
 
 runner = CliRunner()
 
@@ -69,7 +70,7 @@ def test_bare_defaults_to_tui_when_available(sample_dir, tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert len(calls) == 1
     engine, groups = calls[0]
-    assert len(groups) == 3
+    assert len(groups) == EXPECTED_GROUPS
 
 
 def test_resolve_tui_flag_launches_tui(sample_dir, monkeypatch):
@@ -134,7 +135,7 @@ def test_main_bare_with_dir_launches_tui(sample_dir, monkeypatch, capsys):
     cli_mod.main()
     assert len(calls) == 1
     engine, groups = calls[0]
-    assert len(groups) == 3
+    assert len(groups) == EXPECTED_GROUPS
 
 
 def test_main_subcommand_still_dispatches(sample_dir, monkeypatch, capsys):
@@ -172,7 +173,7 @@ def test_main_bare_config_flag(sample_dir, tmp_path, monkeypatch):
     cli_mod.main()
     assert len(calls) == 1
     engine, groups = calls[0]
-    assert len(groups) == 3
+    assert len(groups) == EXPECTED_GROUPS
 
 
 def test_init_config_writes(tmp_path):
