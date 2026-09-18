@@ -314,3 +314,21 @@ class Pipeline:
 ### backlog
 - AI tooling hooks: pre-commit (ruff+format), dependabot/renovate. Editor Copilot/Continue optional.
 - Future: Textual TUI, PySide GUI.
+
+### Next batch (2026-09-17) — TUI navigation + diff tab rework
+- [x] **TUI: Ctrl+Up / Ctrl+Down jump to next/previous NOT-yet-decided group** (independent of focused tab)
+  - New `BINDINGS` entries `ctrl+up → prev_group`, `ctrl+down → next_group`; `action_next_group()` / `action_prev_group()` scan `self.groups` from `current_index` and select the first group whose key is absent from `self.status` (skips resolved AND skipped). Works app-wide via `on_key`-independent Textual action bindings, so it fires regardless of which tab/widget is focused. Cursor moves too (`_select_index` → `move_cursor`). Test `test_ctrl_up_down_skips_decided_groups` (Pilot); lint + full TUI suite green.
+- [x] **TUI: fix button ID generation — `?` hotkey invalid in Textual IDs** — `_render_actions` now uses `act-{seq}` only (dropping hotkey suffix); widget IDs are valid identifiers. Test `test_action_bar_hotkeys` passes.
+- [x] **TUI: fix config help action test** — `RichVisual._renderable` rendered via `Console` for content assertions instead of relying on `.title` attr.
+- [ ] **TUI: keep the initial meta-diff table always visible.** Today the "(d)iff" action overwrites the same Diff tab's content with the plain text diff, losing the metadata table. Add a dedicated main tab (or separate pane) that always holds the meta-diff/table view; text/office diffs render into their own tab. Files/Diff/Log/Meta ordering + Ctrl+T cycle to be decided.
+- [ ] **TUI: external text diff via meld when available** — `(d)iff` for text files should launch meld (if on PATH), falling back to the inline text diff. Shared `launchers._diff_cmd` decides; needs a TUI action entry that launches meld for the current group while keeping the inline diff as fallback.
+- [ ] **TUI: "(?) config" help button** — action button (like `(?)tools` in the CLI) showing the tools configured for the CURRENT entry: which [tools]/[file_types] mapping this kind uses, found/missing status, config path, install hints.
+- [ ] **TUI vs terminal editor conflict (e.g. `fresh`)** — launching a terminal-mode editor inside the TUI splits/clobbers the screen. Fix: pause/suspend the Textual app (exit fullscreen → CLI, run editor blocking, re-enter TUI) until the editor terminates, or refuse/detect TUI editors and suggest a GUI one. Investigate Textual app suspension (stop/pause on F1 or via `--alt`) and `$EDITOR` detection.
+
+### New unit tests (2026-09-18)
+- Added 4 focused tests in `test_engine.py` for launcher/action logic:
+  - `test_launcher_graphical_and_terminal_helpers` — graphical diff detection, terminal vs GUI dispatch
+  - `test_text_diff_prefers_graphical_diff` — `actions_for` picks `DIFF` when meld available
+  - `test_text_diff_falls_back_to_terminal` — inline terminal diff when no GUI diff tool
+  - `test_launcher_run_forces_blocking` — `run(blocking=True)` uses `subprocess.run` (for keepass merge)
+- Fixed pre-existing version test failures (tests asserted `0.1.0` vs actual `0.2.0`) by making them dynamic against `__version__`.

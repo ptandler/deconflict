@@ -36,4 +36,19 @@ tests/           pytest; fixtures = COPIES of "sample files/" in tmpdir — neve
 - Media: audio=mutagen, images=Pillow, video=ffprobe, office=stdlib zipfile text. External tools via `tools.py` (`shutil.which`, per-OS defaults) — never hard-require.
 - Windows: pathlib only, `os.name` branches in `tools.py`, case-insensitive filename matching on NT.
 - Decision log: JSONL in backup dir. Cache: JSON in cache dir.
-- Keep docs (AGENTS.md, plans, README) precise and brief.
+- Keep docs (AGENTS.md, plans, README, CHANGELOG) precise and brief.
+
+## Updating the Changelog
+
+- Edit `CHANGELOG.md`
+- Keep `[Unreleased]` section for things done since last release 
+- Follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format
+
+## Versioning
+
+This project uses [Semantic Versioning](https://semver.org/):
+- **MAJOR** — Breaking changes
+- **MINOR** — New features (backward compatible)
+- **PATCH** — Bug fixes (backward compatible)
+
+Current version defined in: `pyproject.toml`

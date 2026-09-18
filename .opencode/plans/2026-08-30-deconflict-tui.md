@@ -100,3 +100,38 @@ Existing 96 tests unchanged; `mise run check` (ruff check + format-check + pytes
 - [x] Fix action bar duplicate-ID race via unique sequential button IDs
 - [x] Pilot tests; existing suite green (103 total)
 - [x] `mise run check` + manual verify
+
+## Session 2026-09-17 — navigation + diff tab rework
+- [x] **Ctrl+Up / Ctrl+Down jump to next/previous undecided group** — new bindings
+  `("ctrl+up","prev_group")`, `("ctrl+down","next_group")`; `action_next_group()`/`action_prev_group()`
+  skip groups whose key is in `self.status` (resolved or skipped). Textual action bindings are
+  app-wide, so they work regardless of which tab/widget has focus. `_select_index` moves the
+  row cursor. Test `test_ctrl_up_down_skips_decided_groups` added.
+- [x] **Fix button ID generation — `?` hotkey invalid in Textual IDs** — `_render_actions`
+  now uses `act-{seq}` only (dropping hotkey suffix); widget IDs are valid identifiers.
+  Test `test_action_bar_hotkeys` passes.
+- [ ] **Meta-diff must stay visible** — the "(d)iff" action currently overwrites the Diff tab's
+  initial metadata table with the plain text diff. Plan: give the meta-diff table its own
+  persistent tab (e.g. rename tabs to Meta/Files/Diff/Log), so diff output never clobbers it.
+  Update `_show_default_diff`/`_render_diff` + cycle order + tests.
+- [ ] **Text diff via meld when available** — `(d)iff` for text should prefer external meld
+  (shared `launchers._diff_cmd`), inline terminal diff as fallback. TUI launches meld for
+  current group.
+- [ ] **"(?) config" help button** — show tools configured for the CURRENT group kind:
+  [tools]/[file_types] mapping, found/missing, config path, install hints. Reuse shared
+  `_print_kind_tools`/INSTALL_HINTS logic in a renderable form in the Log/tab pane.
+- [ ] **Terminal editor vs TUI conflict (e.g. `fresh`)** — suspending the Textual app around a
+  blocking editor run. Investigate Textual's app suspension (stop the app → run editor in a
+  fresh terminal/screen area → resume), or detect TUI editors and suggest a GUI alternative.
+
+## Session 2026-09-18 — test fixes + unit coverage
+- [x] **Fix config help action test** — `RichVisual._renderable` rendered via `Console`
+  for content assertions instead of relying on `.title` attr (test `test_config_help_action_shows_tools`).
+- [x] **Fix pre-existing version test failures** — tests asserted hardcoded `0.1.0` vs actual
+  `0.2.0`; updated to assert against dynamic `__version__` import.
+- [x] **Added 4 launcher/action unit tests** in `test_engine.py`:
+  `test_launcher_graphical_and_terminal_helpers`,
+  `test_text_diff_prefers_graphical_diff`,
+  `test_text_diff_falls_back_to_terminal`,
+  `test_launcher_run_forces_blocking`.
+- All 140 tests pass; `mise run check` green (lint + format-check + pytest).
