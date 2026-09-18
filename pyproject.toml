@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deconflict"
-version = "0.2.2"
+version = "0.2.3"
 description = "Interactive resolver for 'conflicted copy'-style sync conflict files (Nextcloud, pacman, Syncthing)."
 readme = "README.md"
 requires-python = ">=3.11"
