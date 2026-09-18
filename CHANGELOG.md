@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0]
 
 ### Added
 - **TUI (Textual)**: Full interactive TUI with left group pane, right tabbed pane (Files/Diff/Log), action buttons with hotkeys, `Ctrl+T` tab cycling, mouse support
@@ -69,10 +69,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backup to `~/deconflict-backups/` (configurable), JSONL decision log
 - `--dry-run` safety, `--config FILE` override, `init-config` command
 - Windows support via pathlib + os.name + shutil.which + case-insensitive matching
-
----
-
-## Version History
-
-- **Unreleased** (v0.2.0) — Current development head (140 tests, lint/format clean)
-- **0.1.0** — 2026-08-30 — Initial tagged release
