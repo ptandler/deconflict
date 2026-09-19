@@ -376,6 +376,7 @@ def scan(
         console.print("[green]no conflicts found[/green]")
         raise typer.Exit(0)
     table = Table("group", "pattern", "files")
+    table.columns[0].overflow = "fold"
     for g in result.groups:
         name = _path_cell(engine, g.base) if g.base else g.key
         table.add_row(name, g.pattern, str(len(g.files)))

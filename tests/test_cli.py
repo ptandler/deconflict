@@ -163,7 +163,7 @@ def test_main_bare_config_flag(sample_dir, tmp_path, monkeypatch):
     import deconflict.cli as cli_mod
 
     cfgfile = tmp_path / "alt.toml"
-    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n')
+    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir.as_posix()}"]\n')
     calls: list[tuple] = []
     monkeypatch.setattr(sys, "argv", ["deconflict", "--config", str(cfgfile)])
     monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
@@ -265,7 +265,7 @@ def test_malformed_config_warns(tmp_path):
 
 def test_scan_with_config_flag(sample_dir, tmp_path):
     cfgfile = tmp_path / "cfg.toml"
-    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n')
+    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir.as_posix()}"]\n')
     result = runner.invoke(app, ["scan", "--config", str(cfgfile)])
     assert result.exit_code == 0
     assert "conflict group(s)" in result.stdout
@@ -273,7 +273,7 @@ def test_scan_with_config_flag(sample_dir, tmp_path):
 
 def test_scan_with_global_config_flag(sample_dir, tmp_path):
     cfgfile = tmp_path / "cfg.toml"
-    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n')
+    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir.as_posix()}"]\n')
     result = runner.invoke(app, ["--config", str(cfgfile), "scan"])
     assert result.exit_code == 0
     assert "conflict group(s)" in result.stdout
@@ -289,7 +289,7 @@ def test_cache_clean_removes_stale(tmp_path):
     (cache / "dead.json").write_text(json.dumps({"/gone/nope.txt": {}}), encoding="utf-8")
     (cache / "alive.json").write_text(json.dumps({str(alive_dir / "ok.txt"): {}}), encoding="utf-8")
     cfgfile = tmp_path / "cfg.toml"
-    cfgfile.write_text(f'[general]\ncache_dir="{cache}"\n')
+    cfgfile.write_text(f'[general]\ncache_dir="{cache.as_posix()}"\n')
     result = runner.invoke(app, ["cache", "clean", "--config", str(cfgfile)])
     assert result.exit_code == 0
     assert not (cache / "dead.json").exists()  # stale pruned
@@ -304,7 +304,7 @@ def test_cache_clean_dry_run_keeps_files(tmp_path):
     cache.mkdir()
     (cache / "dead.json").write_text(json.dumps({"/gone/a.txt": {}}), encoding="utf-8")
     cfgfile = tmp_path / "cfg.toml"
-    cfgfile.write_text(f'[general]\ncache_dir="{cache}"\n')
+    cfgfile.write_text(f'[general]\ncache_dir="{cache.as_posix()}"\n')
     result = runner.invoke(app, ["cache", "clean", "--dry-run", "--config", str(cfgfile)])
     assert result.exit_code == 0
     assert "would remove" in result.stdout
@@ -317,7 +317,9 @@ def test_cache_invalidated_after_resolve(sample_dir, tmp_path):
 
     cache = tmp_path / "cache"
     cfgfile = tmp_path / "cfg.toml"
-    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n[general]\ncache_dir="{cache}"\n')
+    cfgfile.write_text(
+        f'[scan]\ndefault_dirs=["{sample_dir.as_posix()}"]\n[general]\ncache_dir="{cache.as_posix()}"\n'
+    )
     scan = runner.invoke(app, ["scan", "--config", str(cfgfile)])
     assert scan.exit_code == 0
     key = cache_key([sample_dir])
@@ -333,7 +335,9 @@ def test_cache_kept_after_dry_run_resolve(sample_dir, tmp_path):
 
     cache = tmp_path / "cache"
     cfgfile = tmp_path / "cfg.toml"
-    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n[general]\ncache_dir="{cache}"\n')
+    cfgfile.write_text(
+        f'[scan]\ndefault_dirs=["{sample_dir.as_posix()}"]\n[general]\ncache_dir="{cache.as_posix()}"\n'
+    )
     runner.invoke(app, ["scan", "--config", str(cfgfile)])
     key = cache_key([sample_dir])
     assert (cache / f"{key}.json").exists()
@@ -345,7 +349,7 @@ def _home_cfg(tmp_path, sample_dir) -> str:
     """A config for the bare-mode tests: default dirs = sample copy."""
     cfgfile = tmp_path / "home" / ".config" / "deconflict" / "config.toml"
     cfgfile.parent.mkdir(parents=True)
-    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir}"]\n')
+    cfgfile.write_text(f'[scan]\ndefault_dirs=["{sample_dir.as_posix()}"]\n')
     return str(cfgfile)
 
 
