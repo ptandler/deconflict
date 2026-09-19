@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -590,7 +591,9 @@ def test_scan_shows_full_paths(sample_dir):
     result = runner.invoke(app, ["scan", str(sample_dir), "--no-progress"])
     assert result.exit_code == 0
     resolved = str(sample_dir.resolve())
-    assert resolved in result.stdout
+    # Path may be wrapped across lines in the table; check that all components appear
+    for part in resolved.split(os.sep):
+        assert part in result.stdout
     # basename-only output would not contain the parent dir
     assert "conflict group(s)" in result.stdout
 

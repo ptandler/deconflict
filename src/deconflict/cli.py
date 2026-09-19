@@ -377,6 +377,7 @@ def scan(
         raise typer.Exit(0)
     table = Table("group", "pattern", "files")
     table.columns[0].overflow = "fold"
+    table.columns[0].no_wrap = False
     for g in result.groups:
         name = _path_cell(engine, g.base) if g.base else g.key
         table.add_row(name, g.pattern, str(len(g.files)))

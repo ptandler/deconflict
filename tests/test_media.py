@@ -169,8 +169,8 @@ def test_office_text_uses_converter_when_available(sample_dir, monkeypatch, tmp_
     """item: when [tools].office_text is set, its output wins over the zip walk."""
     base, _copy = _pair(sample_dir, XLSX)
     sentinel = "FAKE CONVERTER OUTPUT"
-    script = tmp_path / "fake_conv"
-    script.write_text(f"#!/bin/sh\nprintf '%s\\n' '{sentinel}'\n")
+    script = tmp_path / "fake_conv.py"
+    script.write_text(f"#!/usr/bin/env python3\nimport sys\nsys.stdout.write('{sentinel}\\n')\n")
     script.chmod(0o755)
     monkeypatch.setattr(media, "_OFFICE_TEXT_CACHE", {})
     assert media.office_text(base, {"office_text": str(script)}) == sentinel
@@ -180,9 +180,8 @@ def test_office_text_uses_converter_when_available(sample_dir, monkeypatch, tmp_
 def test_office_text_converter_fallback_on_error(sample_dir, tmp_path, monkeypatch):
     """item: a failing converter returns to the zip-based extraction."""
     base, _copy = _pair(sample_dir, XLSX)
-    bad = tmp_path / "bad_conv"
-    bad.write_text("#!/bin/sh\nexit 1\n")
-    bad.chmod(0o755)
+    bad = tmp_path / "bad_conv.py"
+    bad.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(1)\n")
     monkeypatch.setattr(media, "_OFFICE_TEXT_CACHE", {})
     assert media.office_text(base, {"office_text": str(bad)})
 
