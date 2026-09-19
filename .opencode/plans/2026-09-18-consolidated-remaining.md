@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-18 · **Source:** merged from 2026-08-30-deconflict.md + 2026-08-30-deconflict-tui.md
 
-> **Note:** P0 items (1-4) were implemented in commit 78ad4cb (Meta tab, meld diff, config help button, terminal editor suspend). Changelog update pending.
+- [ ] When we have > 2 files in a group, currently only #0 and #1 are compared in table -> I guess we need different modes: a) show a column for every file in group, b) cycle trough #0 vs #n if we don't have enough space (both TUI and interactive mode)
+- [ ] TUI: It should be possible to resize the panes, if the groups pane is too wide or too narrow (drag via mouse)
 
 ---
 
