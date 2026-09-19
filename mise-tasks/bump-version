@@ -5,7 +5,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 mise run check
-echo "Bump version to $*"
+echo "Bump version -> $*"
 uv version --bump "$*"
 version="v$(uv version --short)"
 git add -A
