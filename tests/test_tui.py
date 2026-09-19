@@ -15,9 +15,12 @@ def _make_groups(tmp_path: Path):
     """Set up scan dir + engine + groups for TUI tests."""
     root = tmp_path / "scan"
     root.mkdir()
-    for src in SAMPLE.iterdir():
-        if src.is_file() and not src.name.startswith("."):
-            shutil.copy2(src, root / src.name)
+    for src in sorted(SAMPLE.rglob("*")):
+        if src.is_file():
+            rel = src.relative_to(SAMPLE)
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
     cfg = EngineConfig(
         dirs=[root],
         backup_dir=str(tmp_path / "backup"),

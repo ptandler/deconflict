@@ -75,6 +75,8 @@ def test_factory_actions():
 
 
 def test_supported_tools_per_kind(sample_dir, tmp_path):
+    from testdata import MP3
+
     from deconflict.launchers import ToolType
 
     tools = {
@@ -92,8 +94,7 @@ def test_supported_tools_per_kind(sample_dir, tmp_path):
     # (m)etadata is always offered (generic file attrs), even for text files
     assert engine.supported_tools(readme) == [ToolType.VIEW, ToolType.DIFF, ToolType.VIEW_META]
 
-    mp3_name = "Fröhlicher Kreis - Track12 Scottish Circassian, Irish Washerwoman, My Old Man.mp3"
-    mp3 = next(ga for g, ga in analyzed if g.base and g.base.name == mp3_name)
+    mp3 = next(ga for g, ga in analyzed if g.base and g.base.name == MP3)
     assert set(engine.supported_tools(mp3)) == {
         ToolType.VIEW,
         ToolType.EDIT,

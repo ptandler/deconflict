@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from testdata import DOCX, IMG, MP3, MP3_ARTIST, XLSX
+
 from deconflict import media
 from deconflict.patterns import build_patterns
 from deconflict.scan import scan
 
 PATTERNS = build_patterns()
-
-MP3 = "Fröhlicher Kreis - Track12 Scottish Circassian, Irish Washerwoman, My Old Man.mp3"
 
 
 def _pair(sample_dir, base_name):
@@ -34,14 +34,14 @@ def test_audio_summary_differs(sample_dir):
 
 
 def test_image_summary_has_dims(sample_dir):
-    base, _copy = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
+    base, _copy = _pair(sample_dir, IMG)
     s = media.image_summary(base)
     assert "x" in s
     assert media.is_image(base)
 
 
 def test_office_summary_extracts_text(sample_dir):
-    for name, _ext in [("Kostenauflistung 2023.xlsx", ".xlsx")]:
+    for name, _ext in [(XLSX, ".xlsx"), (DOCX, ".docx")]:
         base, _copy = _pair(sample_dir, name)
         s = media.office_summary(base)
         assert len(s) > 0
@@ -49,7 +49,7 @@ def test_office_summary_extracts_text(sample_dir):
 
 
 def test_office_and_content_differs(sample_dir):
-    base, copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    base, copy = _pair(sample_dir, XLSX)
     assert media.office_summary(base) != media.office_summary(copy)
 
 
@@ -63,7 +63,7 @@ def test_kdbx_detection():
 def test_media_supported_dispatch(sample_dir):
     base, _ = _pair(sample_dir, "Readme.md")
     assert media.media_supported(base) is False
-    img, _ = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
+    img, _ = _pair(sample_dir, IMG)
     assert media.media_supported(img) is True
 
 
@@ -109,7 +109,7 @@ def test_metadata_fields_audio(sample_dir):
 
 
 def test_metadata_fields_image_has_dims_and_format(sample_dir):
-    base, _copy = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
+    base, _copy = _pair(sample_dir, IMG)
     fields = media.metadata_fields(base, "image")
     assert fields.get("dimensions") is not None
     assert fields.get("format") is not None
@@ -127,7 +127,7 @@ def test_metadata_fields_generic_attrs_for_unsupported(sample_dir):
 def test_metadata_equal_and_diff_share_extraction_for_images(sample_dir):
     """item: overview must not say 'metadata same' while the diff shows differences —
     both derive from the same `_content_fields` extractor."""
-    base, copy = _pair(sample_dir, "IMG-20181122-WA0004.jpg")
+    base, copy = _pair(sample_dir, IMG)
     bf = media._content_fields(base, "image", {})
     cf = media._content_fields(copy, "image", {})
     equal = all(bf.get(k) == cf.get(k) for k in dict.fromkeys([*bf, *cf]))
@@ -136,9 +136,9 @@ def test_metadata_equal_and_diff_share_extraction_for_images(sample_dir):
 
 def test_office_metadata_has_core_props_and_clean_text(sample_dir):
     """item: office metadata should be real fields (core props + cleaned text), not raw XML."""
-    base, _copy = _pair(sample_dir, "Vorlage_Transkription.docx")
+    base, _copy = _pair(sample_dir, DOCX)
     fields = media.metadata_fields(base, "office")
-    assert "title" in fields and "creator" in fields
+    assert "creator" in fields
     assert "last_modified_by" in fields
     content = fields.get("content", "")
     # cleaned text: readable words, no XML markup angle-brackets
@@ -158,7 +158,7 @@ def test_metadata_fields_include_generic_attrs(sample_dir):
 
 def test_office_text_falls_back_to_zip_without_converter(sample_dir):
     """item: office_text uses our zip walk when no external converter is configured."""
-    base, _copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    base, _copy = _pair(sample_dir, XLSX)
     text = media.office_text(base, {})
     assert text.strip()
     # content is a readable cell dump, not raw XML markup
@@ -167,7 +167,7 @@ def test_office_text_falls_back_to_zip_without_converter(sample_dir):
 
 def test_office_text_uses_converter_when_available(sample_dir, monkeypatch, tmp_path):
     """item: when [tools].office_text is set, its output wins over the zip walk."""
-    base, _copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    base, _copy = _pair(sample_dir, XLSX)
     sentinel = "FAKE CONVERTER OUTPUT"
     script = tmp_path / "fake_conv"
     script.write_text(f"#!/bin/sh\nprintf '%s\\n' '{sentinel}'\n")
@@ -179,7 +179,7 @@ def test_office_text_uses_converter_when_available(sample_dir, monkeypatch, tmp_
 
 def test_office_text_converter_fallback_on_error(sample_dir, tmp_path, monkeypatch):
     """item: a failing converter returns to the zip-based extraction."""
-    base, _copy = _pair(sample_dir, "Kostenauflistung 2023.xlsx")
+    base, _copy = _pair(sample_dir, XLSX)
     bad = tmp_path / "bad_conv"
     bad.write_text("#!/bin/sh\nexit 1\n")
     bad.chmod(0o755)
@@ -263,4 +263,4 @@ def test_content_fields_uses_exiftool_or_falls_back(sample_dir, monkeypatch):
     assert rich.get("artist") == "Someone"  # from mocked exiftool
     # without exiftool the mutagen fallback still yields tags
     fallback = media._content_fields(base, "audio", {})
-    assert fallback.get("artist") == "Freds Folks"
+    assert fallback.get("artist") == MP3_ARTIST

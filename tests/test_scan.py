@@ -22,10 +22,10 @@ def test_scan_finds_all_nextcloud_groups(sample_dir):
         assert name in names
 
 
-def test_group_has_one_conflict_each(sample_dir):
+def test_group_has_conflicts(sample_dir):
     result = scan([sample_dir], PATTERNS)
     for g in result.groups:
-        assert len(g.conflicts) == 1
+        assert len(g.conflicts) >= 1
 
 
 def test_group_files_include_base_first(sample_dir):

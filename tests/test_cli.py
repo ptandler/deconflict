@@ -117,7 +117,7 @@ def test_resolve_no_tui_forces_cli_loop(sample_dir, tmp_path, monkeypatch):
     monkeypatch.setattr(cli_mod, "_tui_available", lambda: True)
     result = runner.invoke(app, ["resolve", "--no-tui", "--dry-run"], input="s\n" * 10)
     assert result.exit_code == 0
-    assert "resolved 0 group(s) (3 skipped)" in result.stdout
+    assert "resolved 0 group(s) (9 skipped)" in result.stdout
 
 
 def test_main_bare_with_dir_launches_tui(sample_dir, monkeypatch, capsys):
@@ -358,7 +358,7 @@ def test_bare_skips_all_groups_interactively(sample_dir, tmp_path, monkeypatch, 
     result = runner.invoke(app, [], input="s\n" * 10)
     assert result.exit_code == 0
     # item: final message distinguishes skipped from actually-resolved groups
-    assert "resolved 0 group(s) (3 skipped)" in result.stdout
+    assert "resolved 0 group(s) (9 skipped)" in result.stdout
     # skipping must not touch any file
     files_after = {p.name: p.read_bytes() for p in sample_dir.iterdir() if p.is_file()}
     assert files_after == files_before
@@ -369,7 +369,7 @@ def test_interactive_quit_prints_summary(sample_dir, tmp_path, monkeypatch, forc
 
     monkeypatch.setattr(config_mod, "DEFAULT_CFG_PATH", Path(_home_cfg(tmp_path, sample_dir)))
     result = runner.invoke(app, [], input="q\n")
-    assert "aborted after 0 of 6 group(s)" in result.stdout
+    assert "aborted after 0 of 9 group(s)" in result.stdout
 
 
 def test_interactive_tools_prompt(sample_dir, tmp_path, monkeypatch, force_cli):
