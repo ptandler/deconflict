@@ -11,4 +11,4 @@ version="v$(uv version --short)"
 git add -A
 git commit -m "chore: release $version"
 git tag "$version"
-#git push && git push --tags
+git push && git push --tags
