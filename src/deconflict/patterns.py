@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from .paths import casefold
 
-NC_RE = re.compile(r"^(?P<stem>.*?) \(conflicted copy(?P<ts>[^)]*)\)(?P<ext>\.[^.]+)?$")
+NC_RE = re.compile(r"^(?P<stem>.*?) \(conflicted copy\s+(?P<ts>[^)]*)\)(?P<ext>\.[^.]+)?$")
 PACMAN_SUFFIXES = ("pacnew", "pacsave", "pacorig")
 SYNCTHING_STAMP = r"[0-9A-Za-z:+_-]+"
 SYNCTHING_RE = re.compile(
