@@ -6,6 +6,7 @@ import datetime
 import json
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -394,7 +395,17 @@ def _convert_via(conv: str, path: Path) -> str | None:
     base = Path(conv).name
     try:
         # pandoc reads plain text to stdout; odt2txt and friends take the file.
-        args = [conv, "-t", "plain", str(path)] if base.startswith("pandoc") else [conv, str(path)]
+        # On Windows, .py files need explicit python interpreter (shebang not honored).
+        if base.endswith(".py"):
+            args = (
+                [sys.executable, conv, "-t", "plain", str(path)]
+                if base.startswith("pandoc")
+                else [sys.executable, conv, str(path)]
+            )
+        else:
+            args = (
+                [conv, "-t", "plain", str(path)] if base.startswith("pandoc") else [conv, str(path)]
+            )
         proc = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
         if proc.returncode != 0 or not proc.stdout.strip():
             return None
