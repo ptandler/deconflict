@@ -8,8 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Bare invocation (`deconflict [dirs]`) no longer crashes with `typer.exceptions.Exit: 0` when there is nothing to resolve — Typer's `Exit`/`Abort`/`BadParameter` are now translated into process exit codes
+- `deconflict init-config` works from an installed wheel — `config.example.toml` ships as package data (`src/deconflict/config.example.toml`) instead of living in the repo root only
+- "no directories" hint no longer loses `[scan]` to Rich markup parsing
+- Docs: `deconflict init-config` (not `--init-config`) — wrong flag in README and both config templates
+- Removed a duplicated `_from_dict()` in `config.py` (the dead second copy shadowed the first)
 - Nextcloud conflict filename regex now allows multiple spaces before `(conflicted copy ...)` (fixes FileNotFoundError when base filename has double space)
 - `analyze_group()` gracefully handles missing base files (only conflict file exists) — no longer crashes with `FileNotFoundError`
+
+### Changed
+- `config.example.toml` moved into the package (`src/deconflict/`) so it is installed with it
 
 ### Added
 - Test case for conflict group without base file

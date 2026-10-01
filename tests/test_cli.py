@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import os
 import shutil
 from pathlib import Path
@@ -177,6 +178,42 @@ def test_main_bare_config_flag(sample_dir, tmp_path, monkeypatch):
     assert len(groups) == EXPECTED_GROUPS
 
 
+def test_main_bare_no_conflicts_exits_cleanly(tmp_path, monkeypatch, capsys):
+    """Regression: bare mode with nothing to do exits 0 instead of tracebacking.
+
+    `main()` bypasses Typer's exit handling, so `typer.Exit` used to escape as an
+    unhandled exception.
+    """
+    import sys
+
+    import pytest
+
+    import deconflict.cli as cli_mod
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setattr(sys, "argv", ["deconflict", str(empty)])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert exc.value.code == 0
+    assert "no conflicts found" in capsys.readouterr().out
+
+
+def test_main_bare_unknown_option_exits_2(monkeypatch, capsys):
+    """An unknown bare option is a usage error (exit 2), not a traceback."""
+    import sys
+
+    import pytest
+
+    import deconflict.cli as cli_mod
+
+    monkeypatch.setattr(sys, "argv", ["deconflict", "/tmp", "--bogus"])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main()
+    assert exc.value.code == 2
+    assert "unknown option" in capsys.readouterr().out
+
+
 def test_init_config_writes(tmp_path):
     target = tmp_path / "cfg" / "config.toml"
     result = runner.invoke(app, ["init-config", "--path", str(target)])
@@ -185,6 +222,28 @@ def test_init_config_writes(tmp_path):
     # refusing to overwrite
     result2 = runner.invoke(app, ["init-config", "--path", str(target)])
     assert result2.exit_code == 1
+
+
+def test_init_config_template_ships_in_package():
+    """Regression: the template must live INSIDE the package (wheel install)."""
+    import importlib.resources
+
+    import deconflict.config as config_mod
+
+    resource = importlib.resources.files("deconflict") / config_mod._TEMPLATE_NAME
+    assert resource.is_file(), "config.example.toml must be package data, not a repo-root file"
+
+
+def test_init_config_independent_of_cwd(tmp_path, monkeypatch):
+    """init-config works from any cwd (it must not look next to the repo/cwd)."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    target = tmp_path / "cfg" / "config.toml"
+    result = runner.invoke(app, ["init-config", "--path", str(target)])
+    assert result.exit_code == 0
+    template = importlib.resources.files("deconflict").joinpath("config.example.toml")
+    assert target.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
 
 
 def test_generated_template_parses(tmp_path):

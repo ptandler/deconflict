@@ -1,5 +1,5 @@
 # deconflict configuration. Copy to ~/.config/deconflict/config.toml
-# or run `deconflict --init-config` to write a default from this template.
+# or run `deconflict init-config` to write a default from this template.
 
 [scan]
 # Directories scanned recursively when no --dir is given.

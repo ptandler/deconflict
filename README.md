@@ -76,8 +76,10 @@ by default) — never hard-deleted. A JSONL decision log records every choice.
 
 ## Config
 
-Run `deconflict --init-config` for a documented template at
-`~/.config/deconflict/config.toml`. See `config.example.toml`.
+Run `deconflict init-config` for a documented template at
+`~/.config/deconflict/config.toml`. See
+[`src/deconflict/config.example.toml`](src/deconflict/config.example.toml) (shipped in the
+package, so it works from an install).
 `[file_types]` maps each file kind (text, audio, image, video, office, kdbx)
 to the `[tools]` entry that `(v)iew` uses.
 

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import os
-import shutil
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .engine import EngineConfig
+
+_TEMPLATE_NAME = "config.example.toml"  # shipped inside the package (init-config source)
 
 
 @dataclass
@@ -89,33 +91,17 @@ def _from_dict(raw: dict) -> Config:
     return Config(engine=engine, tools=dict(raw.get("tools", {})))
 
 
-def _from_dict(raw: dict) -> Config:
-    scan = raw.get("scan", {})
-    gen = raw.get("general", {})
-    custom = [
-        (p["name"], p["base_name"], p.get("winner", "copy"))
-        for p in scan.get("patterns", [])
-        if isinstance(p, dict) and "name" in p and "base_name" in p
-    ]
-    engine = EngineConfig(
-        dirs=[Path(d) for d in scan.get("default_dirs", [])],
-        enabled_patterns=list(scan.get("enabled_patterns", ["nextcloud", "pacman", "syncthing"])),
-        custom_patterns=custom,
-        backup_dir=gen.get("backup_dir", "~/deconflict-backups"),
-        cache_dir=gen.get("cache_dir", "~/.cache/deconflict"),
-        file_type_tools=dict(raw.get("file_types", {})),
-        file_type_edit_tools=dict(raw.get("file_types_edit", {})),
-    )
-    return Config(engine=engine, tools=dict(raw.get("tools", {})))
-
-
 def write_init_config(path: Path | None = None) -> Path:
-    """Copy config.example.toml to `path` (default user config). Refuses to overwrite."""
+    """Write the packaged config template to `path` (default user config).
+
+    The template ships as package data (`deconflict/config.example.toml`), so
+    this works from an installed wheel as well as a source checkout. Refuses to
+    overwrite an existing file.
+    """
     path = path or DEFAULT_CFG_PATH
-    template = Path(__file__).resolve().parent.parent.parent / "config.example.toml"
-    src = template if template.exists() else Path.cwd() / "config.example.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise FileExistsError(path)
-    shutil.copy2(src, path)
+    template = importlib.resources.files(__package__ or "deconflict") / _TEMPLATE_NAME
+    path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
     return path

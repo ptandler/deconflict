@@ -120,8 +120,10 @@ def _scan_with_progress(
 def _require_dirs(cfg: Config) -> Engine:
     if not cfg.engine.dirs:
         console.print(
-            "[red]no directories.[/red] Pass dirs or set [scan].default_dirs in config "
-            "(see `deconflict config`); run `deconflict init-config` to create one."
+            "[red]no directories.[/red] Pass dirs or set "
+            + escape("[scan].default_dirs")
+            + " in config (see `deconflict config`); run `deconflict init-config` "
+            "to create one."
         )
         raise typer.Exit(2)
     return Engine(cfg.engine)
@@ -804,40 +806,66 @@ _TOP_LEVEL_COMMANDS = frozenset(
 )
 
 
-def main() -> None:
-    argv = sys.argv[1:]
-    # Bare `deconflict /path/...`: a positional directory appears where a
-    # subcommand name would go. Typer would misread the path as a command
-    # name, so detect it and dispatch straight to the bare interactive driver
-    # (auto-TUI + resolve). Known subcommands / leading options are untouched.
-    first_dirs_idx = None
-    for i, a in enumerate(argv):
+def _is_bare_argv(argv: list[str]) -> bool:
+    """True when argv looks like `deconflict [opts] [dirs...]` (no subcommand).
+
+    A positional directory appears where a subcommand name would go, and Typer
+    would misread it as a command name. Known subcommands and option-only
+    invocations (e.g. `--version`) are left to Typer.
+    """
+    for a in argv:
         if a.startswith("-"):
             continue
-        if a in _TOP_LEVEL_COMMANDS:
-            first_dirs_idx = None
-            break
-        first_dirs_idx = i
-        break
-    if first_dirs_idx is not None:
-        config: Path | None = None
-        dirs: list[Path] = []
-        i = 0
-        while i < len(argv):
-            a = argv[i]
-            if a == "--config":
-                if i + 1 >= len(argv):
-                    raise typer.BadParameter("--config requires a value")
-                config = Path(argv[i + 1])
-                i += 2
-                continue
-            if a.startswith("-"):
-                raise typer.BadParameter(f"unknown option for bare invocation: {a}")
-            dirs.append(Path(a))
-            i += 1
+        return a not in _TOP_LEVEL_COMMANDS
+    return False
+
+
+def _bare_argv(argv: list[str]) -> tuple[Path | None, list[Path]]:
+    """Split a bare invocation into (config path or None, scan dirs)."""
+    config: Path | None = None
+    dirs: list[Path] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--config":
+            if i + 1 >= len(argv):
+                raise typer.BadParameter("--config requires a value")
+            config = Path(argv[i + 1])
+            i += 2
+            continue
+        if a.startswith("-"):
+            raise typer.BadParameter(f"unknown option for bare invocation: {a}")
+        dirs.append(Path(a))
+        i += 1
+    return config, dirs
+
+
+def _run_bare(argv: list[str]) -> None:
+    """Parse + run a bare invocation; translate Typer control flow to exit codes.
+
+    Only Typer itself turns `Exit`/`Abort`/`BadParameter` into a process exit
+    code (inside `app()`); the bare path bypasses it, so without this an
+    expected `typer.Exit` — e.g. "no conflicts found" — surfaces as a traceback.
+    """
+    try:
+        config, dirs = _bare_argv(argv)
         _bare_resolve(config, dirs)
+    except typer.Exit as exc:
+        raise SystemExit(exc.exit_code) from None
+    except typer.Abort:
+        console.print("[red]aborted[/red]")
+        raise SystemExit(130) from None
+    except typer.BadParameter as exc:
+        console.print(f"[red]error:[/red] {exc.format_message()}")
+        raise SystemExit(2) from None
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    if not _is_bare_argv(argv):
+        app()
         return
-    app()
+    _run_bare(argv)
 
 
 if __name__ == "__main__":

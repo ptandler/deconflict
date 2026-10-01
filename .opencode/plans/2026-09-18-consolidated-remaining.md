@@ -4,6 +4,10 @@
 
 - [ ] When we have > 2 files in a group, currently only #0 and #1 are compared in table -> I guess we need different modes: a) show a column for every file in group, b) cycle trough #0 vs #n if we don't have enough space (both TUI and interactive mode)
 - [ ] TUI: It should be possible to resize the panes, if the groups pane is too wide or too narrow (drag via mouse)
+- [x] fix bug: bare `deconflict <dir>` with no conflicts crashed with `typer.exceptions.Exit: 0` (main() bypassed Typer's exit handling) → `_run_bare` translates `Exit`/`Abort`/`BadParameter` to exit codes
+- [x] bug: `init-config` failed after install (config.example.toml not in the wheel) → template moved to package data `src/deconflict/config.example.toml`, read via `importlib.resources`
+- [ ] refactor: can we split into logical parts so that each file is max 500 lines, ideally less 300?
+
 
 ---
 
