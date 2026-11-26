@@ -133,15 +133,21 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 - Bare CLI behavior is usable, and `--tui` is explicitly not advertised before implementation.
 - `mise run check` and the Rust test suite are green.
 
-**Current stopping point:**
-- Resume with the release build and executable contract check.
-- Fix cache/media contract failures before implementing TUI work.
-- Do not create a branch or commit until the stable CLI gate is met.
+**Current stopping point — CLI polish complete:**
+- `main.rs` now only parses arguments and starts dispatch. CLI definitions, config helpers, progress, bare interactive mode, and scan/resolve commands live in focused modules.
+- Successful scans save the file count in an optional `.count` sidecar; later scans reuse it as a progress estimate. `--no-cache`, dry-run resolution, and incomplete scans do not write estimates. Cache invalidation removes the sidecar.
+- Progress labels distinguish files seen, the previous-run file estimate, directory entries discovered, and conflict copies queued/analyzed. ETA and overlapping discovery/analysis time windows are shown.
+- Interactive progress uses two rows: timings and counters first, current path second; counts are compacted on narrower terminals. Unit tests cover the layout.
+- `.github/instructions/rust.instructions.md` records Rust module boundaries, UI-free core rules, cache safety, test layout and quality gates.
+- Architecture review: separate scan and resolve command modules add value because both implementations have distinct cache/progress/resolution workflows; keep the small remaining command handlers together.
+- Validation passed: Rust tests, Clippy with warnings denied, release build, shared executable contracts (7 passed, 1 skipped), and a copied `sample-files/` smoke scan (9 conflict groups).
 
-### ! Step 5: Deliver TUI parity — deferred
+**Next steps:**
+1. Commit the stable CLI milestone on the current branch before implementing the Rust TUI.
+2. Keep Python as the reference until Rust TUI and PTY contracts reach parity; do not switch packaging or require Rust for existing users.
 
-Do not start TUI implementation until the CLI stable gate above passes.
-- Implement and expose the real Ratatui/crossterm frontend.
-- Enable `--tui` only after the frontend exists and representative PTY flows pass.
-- Add TUI-specific parity and PTY coverage.
-- Keep the Python implementation as the reference until shared and TUI contracts pass.
+**Architecture principles:**
+- `main.rs` is process startup and dispatch only.
+- Core modules remain UI-free and reusable.
+- Config, commands and progress are separate concerns with explicit interfaces.
+- Tests for public behavior belong in `rust/tests/`; private unit tests stay beside implementation.

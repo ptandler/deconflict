@@ -90,15 +90,40 @@ impl FileCache {
     }
     pub fn clear(&mut self) -> io::Result<()> {
         if !self.dry_run {
-            match fs::remove_file(&self.path) {
-                Ok(()) => (),
-                Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-                Err(e) => return Err(e),
+            for path in [&self.path, &self.count_path()] {
+                match fs::remove_file(path) {
+                    Ok(()) => (),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(e),
+                }
             }
         }
         self.data.clear();
         self.dirty = false;
         Ok(())
+    }
+
+    fn count_path(&self) -> PathBuf {
+        self.path.with_extension("count")
+    }
+
+    pub fn file_count(&mut self) -> Option<u64> {
+        fs::read_to_string(self.count_path())
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    pub fn save_file_count(&mut self, count: u64) -> io::Result<()> {
+        if self.dry_run {
+            return Ok(());
+        }
+        fs::create_dir_all(self.path.parent().unwrap_or(Path::new(".")))?;
+        let path = self.count_path();
+        let tmp = path.with_extension("count.tmp");
+        fs::write(&tmp, count.to_string())?;
+        fs::rename(tmp, path)
     }
 }
 
@@ -390,6 +415,27 @@ assert c.get(Path('/日本/😺'), 42, 4.5)['sha'] == 'rust-λ'
         cache.clear().unwrap();
         assert!(!cache.path.exists());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn file_count_estimate_persists_and_clear_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cache = FileCache::new(dir.path(), "scan", false);
+        assert_eq!(cache.file_count(), None);
+        cache.save_file_count(5525).unwrap();
+
+        let mut reloaded = FileCache::new(dir.path(), "scan", false);
+        assert_eq!(reloaded.file_count(), Some(5525));
+        reloaded.clear().unwrap();
+        assert_eq!(FileCache::new(dir.path(), "scan", false).file_count(), None);
+    }
+
+    #[test]
+    fn dry_run_does_not_write_file_count_estimate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cache = FileCache::new(dir.path(), "scan", true);
+        cache.save_file_count(5525).unwrap();
+        assert!(!dir.path().join("scan.count").exists());
     }
     #[test]
     fn cleanup_modes() {

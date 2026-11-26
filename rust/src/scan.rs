@@ -17,6 +17,10 @@ pub struct Group {
 pub enum Event {
     /// A regular file discovered during directory traversal.
     File(PathBuf),
+    /// A directory discovered during traversal.
+    Directory(PathBuf),
+    /// A conflict copy queued for file analysis.
+    AnalysisQueued(PathBuf),
     /// A file snapshot, not an authorization to mutate or a finalized group.
     Provisional(PathBuf, Result<FileInfo, String>),
     Error(PathBuf, String),
@@ -27,6 +31,9 @@ pub struct ScanResult {
     pub groups: Vec<Group>,
     pub errors: Vec<(PathBuf, String)>,
     pub cancelled: bool,
+    pub file_count: usize,
+    pub directory_count: usize,
+    pub analysis_count: usize,
 }
 
 enum Job {
@@ -116,6 +123,9 @@ pub fn scan<F: FnMut(&Event)>(
     let mut analyses = VecDeque::new();
     let mut visited = BTreeSet::new();
     let mut files = BTreeSet::new();
+    let mut file_count = 0usize;
+    let mut directory_count = 0usize;
+    let mut analysis_count = 0usize;
     let mut active = 0usize;
     let mut analysis_streak = 0usize;
     let mut cancelled = false;
@@ -284,8 +294,11 @@ pub fn scan<F: FnMut(&Event)>(
                         meta
                     };
                     if meta.is_dir() {
+                        directory_count += 1;
+                        event(&Event::Directory(path.clone()));
                         dirs.pending.push_back(Directory::New(path));
                     } else if meta.is_file() && files.insert(path.clone()) {
+                        file_count += 1;
                         event(&Event::File(path.clone()));
                         match path.file_name().and_then(|n| n.to_str()) {
                             Some(name) => match patterns.match_name(name) {
@@ -304,7 +317,9 @@ pub fn scan<F: FnMut(&Event)>(
                                     }
                                     let base = path.with_file_name(&m.base_name);
                                     groups.entry(base).or_default().push((path.clone(), m));
-                                    analyses.push_back(path);
+                                    analyses.push_back(path.clone());
+                                    analysis_count += 1;
+                                    event(&Event::AnalysisQueued(path));
                                 }
                                 Ok(None) => (),
                                 Err(s) => {
@@ -341,6 +356,9 @@ pub fn scan<F: FnMut(&Event)>(
         groups,
         errors,
         cancelled: cancelled || cancel.load(Ordering::Relaxed),
+        file_count: files.len(),
+        directory_count: visited.len(),
+        analysis_count,
     })
 }
 

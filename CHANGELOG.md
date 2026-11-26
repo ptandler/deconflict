@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Experimental Rust library modules for cache, media metadata and external tool discovery.
+- Rust CLI scan progress reuses the previous successful file-count estimate, labels discovery and conflict-analysis counts, and separates timings/counters from the current path on interactive terminals.
 
 ### Fixed
 - Rust scanning reports cancellation reliably and analysis detects disappearing base files.
