@@ -223,10 +223,11 @@ fn perform_scan(
         |event| {
             if show_progress {
                 match event {
-                    Event::Provisional(path, _) => {
+                    Event::File(path) => {
                         count += 1;
                         eprintln!("scanning ({count} files): {}", path.display());
                     }
+                    Event::Provisional(_, _) => {}
                     Event::Error(path, error) => {
                         eprintln!("{}: {error}", path.display());
                     }

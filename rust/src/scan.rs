@@ -15,6 +15,8 @@ pub struct Group {
 
 #[derive(Debug)]
 pub enum Event {
+    /// A regular file discovered during directory traversal.
+    File(PathBuf),
     /// A file snapshot, not an authorization to mutate or a finalized group.
     Provisional(PathBuf, Result<FileInfo, String>),
     Error(PathBuf, String),
@@ -284,6 +286,7 @@ pub fn scan<F: FnMut(&Event)>(
                     if meta.is_dir() {
                         dirs.pending.push_back(Directory::New(path));
                     } else if meta.is_file() && files.insert(path.clone()) {
+                        event(&Event::File(path.clone()));
                         match path.file_name().and_then(|n| n.to_str()) {
                             Some(name) => match patterns.match_name(name) {
                                 Ok(Some(m)) => {
