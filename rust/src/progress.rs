@@ -2,7 +2,7 @@ use console::{measure_text_width, Term};
 use deconflict_core::{
     config::ScanConfig,
     patterns::Patterns,
-    scan::{scan, Event, ScanResult},
+    scan::{scan, Event, Group, ScanResult},
 };
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::{
@@ -12,12 +12,83 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Default)]
+pub(crate) struct ScanProgress {
+    bar: Option<ProgressBar>,
+    show_errors: bool,
+    estimated_file_count: Option<u64>,
+}
+
+impl ScanProgress {
+    pub(crate) fn new(show_progress: bool, estimated_file_count: Option<u64>) -> Self {
+        let bar = if show_progress && io::stderr().is_terminal() {
+            let bar = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr_with_hz(4));
+            if let Some(estimate) = estimated_file_count.filter(|count| *count > 0) {
+                bar.set_length(estimate);
+            }
+            bar.set_style(
+                ProgressStyle::with_template("{elapsed_precise} ETA {eta_precise} | {msg}")
+                    .expect("valid progress template"),
+            );
+            Some(bar)
+        } else {
+            None
+        };
+        Self {
+            bar,
+            show_errors: show_progress,
+            estimated_file_count,
+        }
+    }
+
+    pub(crate) fn suspend<R>(&self, action: impl FnOnce() -> R) -> R {
+        match &self.bar {
+            Some(bar) => bar.suspend(action),
+            None => action(),
+        }
+    }
+}
+
 pub(crate) fn perform_scan(
     roots: &[PathBuf],
     scan_config: &ScanConfig,
     patterns: &Patterns,
     show_progress: bool,
     estimated_file_count: Option<u64>,
+) -> Result<ScanResult, String> {
+    perform_scan_with_groups(
+        roots,
+        scan_config,
+        patterns,
+        show_progress,
+        estimated_file_count,
+        |_| {},
+    )
+}
+
+pub(crate) fn perform_scan_with_groups(
+    roots: &[PathBuf],
+    scan_config: &ScanConfig,
+    patterns: &Patterns,
+    show_progress: bool,
+    estimated_file_count: Option<u64>,
+    mut group_ready: impl FnMut(&Group),
+) -> Result<ScanResult, String> {
+    perform_scan_with_progress(
+        roots,
+        scan_config,
+        patterns,
+        ScanProgress::new(show_progress, estimated_file_count),
+        &mut group_ready,
+    )
+}
+
+pub(crate) fn perform_scan_with_progress(
+    roots: &[PathBuf],
+    scan_config: &ScanConfig,
+    patterns: &Patterns,
+    progress: ScanProgress,
+    mut group_ready: impl FnMut(&Group),
 ) -> Result<ScanResult, String> {
     if roots.is_empty() {
         return Err("no directories. Pass dirs or set [scan].default_dirs".into());
@@ -30,19 +101,6 @@ pub(crate) fn perform_scan(
     let mut discovery_last_event = None;
     let mut analysis_started = None;
     let mut analysis_last_event = None;
-    let progress = if show_progress && io::stderr().is_terminal() {
-        let bar = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr_with_hz(4));
-        if let Some(estimate) = estimated_file_count.filter(|count| *count > 0) {
-            bar.set_length(estimate);
-        }
-        bar.set_style(
-            ProgressStyle::with_template("{elapsed_precise} ETA {eta_precise} | {msg}")
-                .expect("valid progress template"),
-        );
-        Some(bar)
-    } else {
-        None
-    };
     let result = scan(
         roots,
         scan_config,
@@ -52,7 +110,7 @@ pub(crate) fn perform_scan(
             Event::File(path) => {
                 file_count += 1;
                 discovery_last_event = Some(Instant::now());
-                if let Some(bar) = &progress {
+                if let Some(bar) = &progress.bar {
                     bar.set_position(file_count as u64);
                     set_progress_message(
                         bar,
@@ -60,7 +118,7 @@ pub(crate) fn perform_scan(
                         directory_count,
                         analysis_done,
                         analysis_queued,
-                        estimated_file_count,
+                        progress.estimated_file_count,
                         path,
                     );
                 }
@@ -68,14 +126,14 @@ pub(crate) fn perform_scan(
             Event::Directory(path) => {
                 directory_count += 1;
                 discovery_last_event = Some(Instant::now());
-                if let Some(bar) = &progress {
+                if let Some(bar) = &progress.bar {
                     set_progress_message(
                         bar,
                         file_count,
                         directory_count,
                         analysis_done,
                         analysis_queued,
-                        estimated_file_count,
+                        progress.estimated_file_count,
                         path,
                     );
                 }
@@ -83,14 +141,14 @@ pub(crate) fn perform_scan(
             Event::AnalysisQueued(path) => {
                 analysis_queued += 1;
                 analysis_started.get_or_insert_with(Instant::now);
-                if let Some(bar) = &progress {
+                if let Some(bar) = &progress.bar {
                     set_progress_message(
                         bar,
                         file_count,
                         directory_count,
                         analysis_done,
                         analysis_queued,
-                        estimated_file_count,
+                        progress.estimated_file_count,
                         path,
                     );
                 }
@@ -98,29 +156,31 @@ pub(crate) fn perform_scan(
             Event::Provisional(path, _) => {
                 analysis_done += 1;
                 analysis_last_event = Some(Instant::now());
-                if let Some(bar) = &progress {
+                if let Some(bar) = &progress.bar {
                     set_progress_message(
                         bar,
                         file_count,
                         directory_count,
                         analysis_done,
                         analysis_queued,
-                        estimated_file_count,
+                        progress.estimated_file_count,
                         path,
                     );
                 }
             }
             Event::Error(path, error) => {
-                if let Some(bar) = &progress {
+                if let Some(bar) = &progress.bar {
                     bar.suspend(|| eprintln!("{}: {error}", path.display()));
-                } else if show_progress {
+                } else if progress.show_errors {
                     eprintln!("{}: {error}", path.display());
                 }
             }
+            Event::DirectoryComplete(_) => (),
+            Event::GroupReady(group) => group_ready(group),
         },
     )?;
 
-    if let Some(bar) = progress {
+    if let Some(bar) = &progress.bar {
         let total = started.elapsed();
         let discovery = discovery_last_event
             .map(|last| last.duration_since(started))

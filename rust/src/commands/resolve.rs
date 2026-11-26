@@ -23,6 +23,29 @@ pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
     )?;
     let backup = general_backup(&config);
     let cache_dir = general_cache(&config);
+    let media = media_tools(&config);
+    if args.auto.is_none() {
+        return crate::interactive::run_interactive_scan(
+            crate::interactive::InteractiveScanRequest {
+                roots: &roots,
+                scan_config: &scan_config,
+                patterns: &patterns,
+                backup: &backup,
+                cache_dir: &cache_dir,
+                media: &media,
+                options: crate::interactive::InteractiveOptions {
+                    no_cache: args.no_cache,
+                    refresh: args.refresh,
+                    dry_run: args.dry_run,
+                    wait_for_scan: args.wait_for_scan,
+                    wait_for_analysis: args.wait_for_analysis,
+                },
+                show_progress: args.progress && !args.no_progress,
+                no_conflicts_message: "no conflicts to resolve",
+            },
+        );
+    }
+
     let key = cache_key(&roots).map_err(|e| format!("cannot key cache: {e}"))?;
     let mut file_cache = FileCache::new(&cache_dir, &key, args.dry_run || args.no_cache);
     let estimated_file_count = if args.no_cache || args.dry_run {
@@ -34,7 +57,7 @@ pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
         &roots,
         &scan_config,
         &patterns,
-        args.progress,
+        args.progress && !args.no_progress,
         estimated_file_count,
     )?;
     if result.cancelled || !result.errors.is_empty() {
@@ -55,27 +78,6 @@ pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
         return Ok(());
     }
 
-    let media = media_tools(&config);
-    if args.auto.is_none() {
-        crate::interactive::resolve_interactively(
-            &result,
-            &roots,
-            &backup,
-            &mut file_cache,
-            &media,
-            crate::interactive::InteractiveOptions {
-                no_cache: args.no_cache,
-                refresh: args.refresh,
-                dry_run: args.dry_run,
-            },
-        )?;
-        if !args.no_cache && !args.dry_run {
-            file_cache
-                .clear()
-                .map_err(|e| format!("cannot invalidate cache: {e}"))?;
-        }
-        return Ok(());
-    }
     let mut resolved = 0;
     for (index, group) in result.groups.iter().enumerate() {
         let stamped = if args.no_cache {

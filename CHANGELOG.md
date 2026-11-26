@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Experimental Rust library modules for cache, media metadata and external tool discovery.
 - Rust CLI scan progress reuses the previous successful file-count estimate, labels discovery and conflict-analysis counts, and separates timings/counters from the current path on interactive terminals.
 - Rust interactive resolve reports content differences, file metadata, analysis notes and recommendations before prompting for an action.
+- Rust interactive resolve streams completed group analyses during scanning; `--wait-for-scan` and `--wait-for-analysis` offer buffered-start modes, with choices applied only after a complete scan.
 - Rust analysis tables use terminal-aware color and emphasis, and include all available ExifTool audio/image metadata.
 
 ### Fixed
+- Rust interactive scan progress pauses while a prompt is open; wait messages are shown only while work remains.
 - Rust scanning reports cancellation reliably and analysis detects disappearing base files.
 - Rust metadata reports distinguish creation and modification times and display local timestamps.
 - Rust ExifTool parsing now reads its JSON output, preserving metadata keys and values instead of misreading colon-delimited dates as field names.

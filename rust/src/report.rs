@@ -17,16 +17,16 @@ pub(crate) struct GroupReport {
 pub(crate) fn group_report(
     group: &Group,
     analysis: &GroupAnalysis,
-    index: usize,
-    total: usize,
+    position: Option<(usize, usize)>,
 ) -> GroupReport {
     let title = group.base.file_name().unwrap_or_default().to_string_lossy();
+    let heading = position.map_or_else(
+        || format!("Group ready — {}", one_line(&title)),
+        |(index, total)| format!("Group {index}/{total} — {}", one_line(&title)),
+    );
     let mut lines = vec![
         String::new(),
-        format!(
-            "{}",
-            style(format!("Group {index}/{total} — {}", one_line(&title))).bold()
-        ),
+        style(heading).bold().to_string(),
         if analysis.all_equal {
             "all files identical in content".to_string()
         } else {

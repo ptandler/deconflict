@@ -153,7 +153,7 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
     );
     assert!(!stdout.contains("\u{1b}["));
     for expected in [
-        "Group 1/1 — Readme.md",
+        "Group ready — Readme.md",
         "files differ in content",
         "full paths:",
         "metadata diff",
@@ -175,6 +175,103 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
     assert!(base.exists());
     assert!(copy.exists());
     assert!(!cache_dir.exists());
+}
+
+#[test]
+fn wait_modes_show_final_group_positions() {
+    for (wait_option, mode) in [
+        ("--wait-for-scan", "scan"),
+        ("--wait-for-analysis", "analysis"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("scan");
+        let config = temp.path().join("config.toml");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("file"), b"base").unwrap();
+        fs::write(root.join("file.pacnew"), b"copy").unwrap();
+        write_config(&config, &temp.path().join("cache"));
+
+        let mut child = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+            .arg("--config")
+            .arg(&config)
+            .arg("resolve")
+            .arg(wait_option)
+            .arg("--no-cache")
+            .arg("--dry-run")
+            .arg(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"0\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{mode} wait failed; stdout: {}\nstderr: {}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(stdout.contains("Group 1/1 — file"));
+        assert!(!stdout.contains("Group ready —"));
+    }
+}
+
+#[test]
+fn scan_and_analysis_wait_modes_are_mutually_exclusive() {
+    let output = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+        .args(["resolve", "--wait-for-scan", "--wait-for-analysis"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
+}
+
+#[test]
+fn interactive_resolve_does_not_apply_choices_after_incomplete_scan() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("scan");
+    let missing_root = temp.path().join("missing");
+    let cache_dir = temp.path().join("cache");
+    let backup_dir = temp.path().join("backup");
+    let config = temp.path().join("config.toml");
+    fs::create_dir(&root).unwrap();
+    let base = root.join("file");
+    let copy = root.join("file.pacnew");
+    fs::write(&base, b"base").unwrap();
+    fs::write(&copy, b"copy").unwrap();
+    fs::write(
+        &config,
+        format!(
+            "[general]\ncache_dir = {:?}\nbackup_dir = {:?}\n",
+            cache_dir.to_string_lossy(),
+            backup_dir.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+        .arg("--config")
+        .arg(&config)
+        .arg("resolve")
+        .arg("--no-cache")
+        .arg(&root)
+        .arg(&missing_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"1\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("scan incomplete; refusing to resolve")
+    );
+    assert_eq!(fs::read(base).unwrap(), b"base");
+    assert_eq!(fs::read(copy).unwrap(), b"copy");
+    assert!(!backup_dir.exists());
 }
 
 #[test]
@@ -209,7 +306,13 @@ fn interactive_resolve_can_skip_and_quit() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("aborted after 1 of 2 group(s)"));
+    assert!(stdout.contains("aborted after 1 of 2 group(s)"), "{stdout}");
+    assert!(
+        stdout
+            .matches("Finishing pending group analysis; no further groups will be prompted")
+            .count()
+            <= 1
+    );
     assert!(stdout.contains("(1 skipped)"));
     for name in ["first.txt", "second.txt"] {
         assert_eq!(fs::read(root.join(name)).unwrap(), b"base");

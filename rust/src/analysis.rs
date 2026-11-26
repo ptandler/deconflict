@@ -366,7 +366,7 @@ fn analyze_cached(path: &Path, cache: &mut FileCache, refresh: bool) -> io::Resu
     Ok(info)
 }
 
-fn generic_fields(path: &Path, kind: &str, tools: &MediaTools) -> BTreeMap<String, String> {
+fn generic_fields(path: &Path, content: Option<&media::Fields>) -> BTreeMap<String, String> {
     let mut fields = BTreeMap::new();
     if let Ok(meta) = path.metadata() {
         fields.insert("size".into(), meta.len().to_string());
@@ -387,8 +387,8 @@ fn generic_fields(path: &Path, kind: &str, tools: &MediaTools) -> BTreeMap<Strin
             );
         }
     }
-    if let Some(content) = media::content_fields(path, kind, tools) {
-        fields.extend(content);
+    if let Some(content) = content {
+        fields.extend(content.clone());
     }
     fields
 }
@@ -441,30 +441,37 @@ fn assemble_group(
         })
         .unwrap_or_else(|| "text".into());
 
-    let mut meta_fields = Vec::with_capacity(base.iter().len() + copies.len());
-    if let Some(base_info) = &base {
-        meta_fields.push(generic_fields(&base_info.path, &kind, tools));
-    }
-    for copy in &copies {
-        meta_fields.push(generic_fields(&copy.path, &kind, tools));
-    }
+    let items: Vec<_> = base.iter().chain(copies.iter()).collect();
+    let content_fields: Vec<_> = items
+        .iter()
+        .map(|item| media::content_fields(&item.path, &kind, tools))
+        .collect();
+    let meta_fields = items
+        .iter()
+        .zip(&content_fields)
+        .map(|(item, content)| generic_fields(&item.path, content.as_ref()))
+        .collect();
 
     let mut meta = Vec::with_capacity(copies.len());
     let mut meta_diff = Vec::with_capacity(copies.len());
-    if let Some(base_info) = &base {
-        for copy in &copies {
-            meta.push(media::metadata_equal(
-                &base_info.path,
-                &copy.path,
-                &kind,
-                tools,
-            ));
-            meta_diff.push(media::metadata_diff(
-                &base_info.path,
-                &copy.path,
-                &kind,
-                tools,
-            ));
+    if base.is_some() {
+        for copy_index in 0..copies.len() {
+            let comparison = match (
+                content_fields.first().and_then(Option::as_ref),
+                content_fields.get(copy_index + 1).and_then(Option::as_ref),
+            ) {
+                (Some(base), Some(copy)) => media::metadata_comparison_fields(base, copy, &kind),
+                _ => media::MetadataComparison::Unavailable,
+            };
+            meta.push(match &comparison {
+                media::MetadataComparison::Unavailable => None,
+                media::MetadataComparison::Equal => Some(true),
+                media::MetadataComparison::Different(_) => Some(false),
+            });
+            meta_diff.push(match comparison {
+                media::MetadataComparison::Different(diff) => Some(diff),
+                media::MetadataComparison::Unavailable | media::MetadataComparison::Equal => None,
+            });
         }
     }
 

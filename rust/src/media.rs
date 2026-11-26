@@ -528,6 +528,10 @@ pub fn metadata_comparison(a: &Path, b: &Path, kind: &str, tools: &Tools) -> Met
     ) else {
         return MetadataComparison::Unavailable;
     };
+    metadata_comparison_fields(&a, &b, kind)
+}
+
+pub(crate) fn metadata_comparison_fields(a: &Fields, b: &Fields, kind: &str) -> MetadataComparison {
     let keys: BTreeSet<_> = a
         .keys()
         .chain(b.keys())

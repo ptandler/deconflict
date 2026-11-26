@@ -149,10 +149,18 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 
 **Follow-up complete:** restored full ExifTool metadata in Rust reports and added terminal-aware styling.
 
+**Streaming interactive CLI — complete:**
+- Directory-ready events now emit only after traversal and conflict-copy snapshots finish; failed/incomplete directories do not publish usable groups.
+- Rich group analysis runs in a background worker while scanning continues. The CLI displays each analyzed group as soon as it is ready, with status updates while waiting for subsequent results.
+- `resolve --wait-for-scan` delays interaction until discovery ends; `resolve --wait-for-analysis` waits for both discovery and all group reports. These flags are mutually exclusive and unavailable with `--auto`.
+- User decisions are buffered until scanning and all group analyses succeed; an incomplete scan cannot mutate files, including choices already entered.
+- Verified with Rust formatting, tests, Clippy, release build, and the Rust executable contract suite.
+
+**Streaming CLI follow-up — complete:** progress redraws suspend while reports and prompts are displayed; “Choice recorded” and scan/analysis wait messages appear only when results are actually pending, and identical statuses are not repeated. On `q`, finish outstanding scan work quietly so prior choices remain eligible and the successful-scan estimate can still be saved. Validated by Rust unit/integration tests, Clippy, and a pseudo-terminal prompt/progress smoke test.
+
 **Next steps:**
-1. Commit the CLI milestone on the current branch.
-2. Implement the Rust TUI and its PTY contracts.
-3. Keep Python as the reference until Rust TUI contracts reach parity; do not switch packaging or require Rust for existing users.
+1. Implement the Rust TUI and its PTY contracts, reusing the scanner's directory/group events.
+2. Keep Python as the reference until Rust TUI contracts reach parity; do not switch packaging or require Rust for existing users.
 
 **Architecture principles:**
 - `main.rs` is process startup and dispatch only.

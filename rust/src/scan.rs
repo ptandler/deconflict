@@ -3,7 +3,7 @@ use crate::config::ScanConfig;
 use crate::patterns::{ConflictMatch, Patterns};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -23,6 +23,10 @@ pub enum Event {
     AnalysisQueued(PathBuf),
     /// A file snapshot, not an authorization to mutate or a finalized group.
     Provisional(PathBuf, Result<FileInfo, String>),
+    /// Directory entries are exhausted and all conflict-copy snapshots are complete.
+    DirectoryComplete(PathBuf),
+    /// A complete conflict group ready for richer background analysis.
+    GroupReady(Group),
     Error(PathBuf, String),
 }
 
@@ -50,8 +54,17 @@ enum Message {
     Analysis(PathBuf, Result<FileInfo, String>),
     Done {
         directory: bool,
+        path: Option<PathBuf>,
         continuation: Option<Directory>,
     },
+}
+
+#[derive(Default)]
+struct DirectoryState {
+    complete: bool,
+    pending_analyses: usize,
+    incomplete: bool,
+    failed_analyses: BTreeSet<PathBuf>,
 }
 
 struct DirectoryQueue {
@@ -97,6 +110,44 @@ fn prefer_directory(analysis_streak: usize, pending_analyses: usize) -> bool {
     analysis_streak >= 3 || pending_analyses == 0
 }
 
+fn emit_ready_groups(
+    directory: &Path,
+    groups: &BTreeMap<PathBuf, Vec<(PathBuf, ConflictMatch)>>,
+    states: &BTreeMap<PathBuf, DirectoryState>,
+    emitted: &mut BTreeSet<PathBuf>,
+    event: &mut impl FnMut(&Event),
+) {
+    let Some(state) = states.get(directory) else {
+        return;
+    };
+    if !state.complete || state.pending_analyses > 0 || state.incomplete {
+        return;
+    }
+    let failed_analyses = &state.failed_analyses;
+    let ready: Vec<_> = groups
+        .iter()
+        .filter(|(base, conflicts)| {
+            base.parent() == Some(directory)
+                && !emitted.contains(*base)
+                && conflicts
+                    .iter()
+                    .all(|(path, _)| !failed_analyses.contains(path))
+        })
+        .map(|(base, conflicts)| {
+            let mut conflicts = conflicts.clone();
+            conflicts.sort_by(|a, b| a.0.cmp(&b.0));
+            Group {
+                base: base.clone(),
+                conflicts,
+            }
+        })
+        .collect();
+    for group in ready {
+        emitted.insert(group.base.clone());
+        event(&Event::GroupReady(group));
+    }
+}
+
 /// Bounds dispatched jobs, channel messages and open directory iterators, not pending directory
 /// paths, analyses, visited identities, or results. When iterator capacity is full,
 /// unopened directories wait for an open iterator to finish. Events are provisional; only the
@@ -116,6 +167,8 @@ pub fn scan<F: FnMut(&Event)>(
     let (msg_tx, msg_rx) = mpsc::sync_channel::<Message>(config.max_in_flight);
     let job_rx = Arc::new(Mutex::new(job_rx));
     let mut groups: BTreeMap<PathBuf, Vec<(PathBuf, ConflictMatch)>> = BTreeMap::new();
+    let mut directory_states: BTreeMap<PathBuf, DirectoryState> = BTreeMap::new();
+    let mut emitted_groups = BTreeSet::new();
     let mut errors = Vec::new();
     let concurrency = config.workers.min(config.max_in_flight);
     // Two slots allow a single worker to interleave directories as well as analyses.
@@ -139,16 +192,19 @@ pub fn scan<F: FnMut(&Event)>(
                     Err(_) => break,
                 };
                 let directory_job = matches!(&job, Job::Directory(_));
+                let mut completed_directory = None;
                 let continuation = match job {
                     Job::Directory(directory) => {
                         let (path, mut entries) = match directory {
                             Directory::New(path) => match fs::read_dir(&path) {
                                 Ok(entries) => (path, entries),
                                 Err(e) => {
+                                    let directory_path = path.clone();
                                     if tx.send(Message::Problem(path, e.to_string())).is_err()
                                         || tx
                                             .send(Message::Done {
                                                 directory: true,
+                                                path: Some(directory_path),
                                                 continuation: None,
                                             })
                                             .is_err()
@@ -171,7 +227,10 @@ pub fn scan<F: FnMut(&Event)>(
                                 }
                                 Some(Directory::Open(path, entries))
                             }
-                            None => None,
+                            None => {
+                                completed_directory = Some(path);
+                                None
+                            }
                         }
                     }
                     Job::Analysis(path) => {
@@ -185,6 +244,7 @@ pub fn scan<F: FnMut(&Event)>(
                 if tx
                     .send(Message::Done {
                         directory: directory_job,
+                        path: completed_directory,
                         continuation,
                     })
                     .is_err()
@@ -214,6 +274,7 @@ pub fn scan<F: FnMut(&Event)>(
                         }
                         Directory::New(path) => match fs::canonicalize(&path) {
                             Ok(identity) if visited.insert(identity.clone()) => {
+                                directory_states.entry(identity.clone()).or_default();
                                 Job::Directory(Directory::New(identity))
                             }
                             Ok(_) => {
@@ -246,6 +307,7 @@ pub fn scan<F: FnMut(&Event)>(
             match msg_rx.recv().expect("workers terminated unexpectedly") {
                 Message::Done {
                     directory,
+                    path,
                     continuation,
                 } => {
                     active -= 1;
@@ -255,23 +317,73 @@ pub fn scan<F: FnMut(&Event)>(
                         } else {
                             continuation
                         });
+                        if let Some(path) =
+                            path.filter(|_| !cancelled && !cancel.load(Ordering::Relaxed))
+                        {
+                            let completed = if let Some(state) = directory_states.get_mut(&path) {
+                                if state.incomplete {
+                                    false
+                                } else {
+                                    state.complete = true;
+                                    true
+                                }
+                            } else {
+                                false
+                            };
+                            if completed {
+                                event(&Event::DirectoryComplete(path.clone()));
+                            }
+                            emit_ready_groups(
+                                &path,
+                                &groups,
+                                &directory_states,
+                                &mut emitted_groups,
+                                &mut event,
+                            );
+                        }
                     }
                 }
                 Message::Problem(path, message) => {
+                    if let Some(state) = directory_states.get_mut(&path) {
+                        state.incomplete = true;
+                    }
                     event(&Event::Error(path.clone(), message.clone()));
                     errors.push((path, message));
                 }
                 Message::Analysis(path, result) => {
-                    if let Err(message) = &result {
+                    let parent = path.parent().map(Path::to_path_buf);
+                    if let Some(parent_path) = parent.as_ref() {
+                        if let Some(state) = directory_states.get_mut(parent_path) {
+                            state.pending_analyses = state.pending_analyses.saturating_sub(1);
+                            if let Err(message) = &result {
+                                state.failed_analyses.insert(path.clone());
+                                errors.push((path.clone(), message.clone()));
+                            }
+                        }
+                    } else if let Err(message) = &result {
                         errors.push((path.clone(), message.clone()));
                     }
                     event(&Event::Provisional(path, result));
+                    if let Some(parent) = parent {
+                        emit_ready_groups(
+                            &parent,
+                            &groups,
+                            &directory_states,
+                            &mut emitted_groups,
+                            &mut event,
+                        );
+                    }
                 }
                 Message::Entry(path) if !cancelled && !cancel.load(Ordering::Relaxed) => {
                     let meta = match fs::symlink_metadata(&path) {
                         Ok(m) => m,
                         Err(e) => {
                             let s = e.to_string();
+                            if let Some(state) =
+                                path.parent().and_then(|p| directory_states.get_mut(p))
+                            {
+                                state.incomplete = true;
+                            }
                             event(&Event::Error(path.clone(), s.clone()));
                             errors.push((path, s));
                             continue;
@@ -285,6 +397,11 @@ pub fn scan<F: FnMut(&Event)>(
                             Ok(m) => m,
                             Err(e) => {
                                 let s = e.to_string();
+                                if let Some(state) =
+                                    path.parent().and_then(|p| directory_states.get_mut(p))
+                                {
+                                    state.incomplete = true;
+                                }
                                 event(&Event::Error(path.clone(), s.clone()));
                                 errors.push((path, s));
                                 continue;
@@ -311,24 +428,44 @@ pub fn scan<F: FnMut(&Event)>(
                                     {
                                         let message =
                                             "pattern base must be a non-empty filename".to_string();
+                                        if let Some(state) =
+                                            path.parent().and_then(|p| directory_states.get_mut(p))
+                                        {
+                                            state.incomplete = true;
+                                        }
                                         event(&Event::Error(path.clone(), message.clone()));
                                         errors.push((path, message));
                                         continue;
                                     }
                                     let base = path.with_file_name(&m.base_name);
                                     groups.entry(base).or_default().push((path.clone(), m));
+                                    if let Some(state) =
+                                        path.parent().and_then(|p| directory_states.get_mut(p))
+                                    {
+                                        state.pending_analyses += 1;
+                                    }
                                     analyses.push_back(path.clone());
                                     analysis_count += 1;
                                     event(&Event::AnalysisQueued(path));
                                 }
                                 Ok(None) => (),
                                 Err(s) => {
+                                    if let Some(state) =
+                                        path.parent().and_then(|p| directory_states.get_mut(p))
+                                    {
+                                        state.incomplete = true;
+                                    }
                                     event(&Event::Error(path.clone(), s.clone()));
                                     errors.push((path, s));
                                 }
                             },
                             None => {
                                 let s = "non-UTF-8 filename cannot be matched".to_string();
+                                if let Some(state) =
+                                    path.parent().and_then(|p| directory_states.get_mut(p))
+                                {
+                                    state.incomplete = true;
+                                }
                                 event(&Event::Error(path.clone(), s.clone()));
                                 errors.push((path, s));
                             }
@@ -365,6 +502,45 @@ pub fn scan<F: FnMut(&Event)>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_ready_follows_directory_completion_and_copy_analysis() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("item");
+        let copy = dir.path().join("item.pacnew");
+        fs::write(&base, b"base").unwrap();
+        fs::write(&copy, b"copy").unwrap();
+        let config = ScanConfig::default();
+        let patterns = Patterns::build(&config).unwrap();
+        let mut directory_complete = false;
+        let mut copy_analyzed = false;
+        let mut ready_count = 0;
+
+        let result = scan(
+            &[dir.path().to_path_buf()],
+            &config,
+            &patterns,
+            &AtomicBool::new(false),
+            |event| match event {
+                Event::DirectoryComplete(path) if path == dir.path() => {
+                    directory_complete = true;
+                }
+                Event::Provisional(path, Ok(_)) if path == &copy => copy_analyzed = true,
+                Event::GroupReady(group) => {
+                    assert!(directory_complete);
+                    assert!(copy_analyzed);
+                    assert_eq!(group.base, base);
+                    assert_eq!(group.conflicts.len(), 1);
+                    ready_count += 1;
+                }
+                _ => (),
+            },
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty());
+        assert_eq!(ready_count, 1);
+    }
 
     #[test]
     fn directory_gets_a_turn_even_with_a_large_analysis_backlog() {

@@ -104,7 +104,11 @@ pub(crate) struct ResolveArgs {
     pub(crate) dirs: Vec<PathBuf>,
     #[arg(long)]
     pub(crate) pattern: Option<String>,
-    #[arg(long, value_parser = ["base", "copy", "newest", "bigger", "recommended"])]
+    #[arg(
+        long,
+        value_parser = ["base", "copy", "newest", "bigger", "recommended"],
+        conflicts_with_all = ["wait_for_scan", "wait_for_analysis"]
+    )]
     pub(crate) auto: Option<String>,
     #[arg(long)]
     pub(crate) dry_run: bool,
@@ -116,6 +120,18 @@ pub(crate) struct ResolveArgs {
     pub(crate) progress: bool,
     #[arg(long)]
     pub(crate) no_progress: bool,
+    #[arg(
+        long,
+        conflicts_with = "wait_for_analysis",
+        help = "Wait for scanning to finish before interactive prompts"
+    )]
+    pub(crate) wait_for_scan: bool,
+    #[arg(
+        long,
+        conflicts_with = "wait_for_scan",
+        help = "Wait for scanning and all group analyses before prompting"
+    )]
+    pub(crate) wait_for_analysis: bool,
     #[arg(long)]
     pub(crate) tui: bool,
     #[arg(long)]
