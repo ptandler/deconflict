@@ -11,9 +11,10 @@ use deconflict_core::{
 };
 use std::{
     fs,
-    io::{self, BufRead, IsTerminal},
+    io::{self, BufRead, IsTerminal, Write},
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
+    time::{Duration, Instant},
 };
 
 #[derive(Parser)]
@@ -215,7 +216,9 @@ fn perform_scan(
         return Err("no directories. Pass dirs or set [scan].default_dirs".into());
     }
     let mut count = 0usize;
-    scan(
+    let mut last_update = Instant::now();
+    let terminal = io::stderr().is_terminal();
+    let result = scan(
         roots,
         scan_config,
         patterns,
@@ -225,16 +228,38 @@ fn perform_scan(
                 match event {
                     Event::File(path) => {
                         count += 1;
-                        eprintln!("scanning ({count} files): {}", path.display());
+                        if last_update.elapsed() >= Duration::from_millis(600) {
+                            let status = format!("scanning ({count} files): {}", path.display());
+                            if terminal {
+                                eprint!("\r{status}");
+                            } else {
+                                eprintln!("{status}");
+                            }
+                            let _ = io::stderr().flush();
+                            last_update = Instant::now();
+                        }
                     }
                     Event::Provisional(_, _) => {}
                     Event::Error(path, error) => {
-                        eprintln!("{}: {error}", path.display());
+                        if terminal {
+                            eprintln!("\n{}: {error}", path.display());
+                        } else {
+                            eprintln!("{}: {error}", path.display());
+                        }
                     }
                 }
             }
         },
-    )
+    );
+
+    if show_progress && count > 0 {
+        if terminal {
+            eprintln!("\rscanned {count} files");
+        } else {
+            eprintln!("scanned {count} files");
+        }
+    }
+    result
 }
 
 fn default_config_path() -> PathBuf {
