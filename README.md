@@ -31,22 +31,30 @@ Then you can simply do `deconflict` and resolve conflicts one by one.
 
 ## Commands
 
-TODO: check if complete and correct
-
 ```sh
-deconflict                            # run `scan` and `resolve` andn start TUI (unless --no-tui)
-deconflict scan                       # scan configured dirs, list conflict groups, exit
-deconflict scan ~/Sync                # scan a specific dir recursively
-deconflict scan --pattern nextcloud   # restrict to one pattern group
+deconflict                            # run `scan`and interactive resolution (TUI if available)
+deconflict ~/Sync                     # scan specific dirs in bare interactive mode
+deconflict scan                       # scan configured dirs and list conflicts
+deconflict scan ~/Sync --pattern pacman
+deconflict scan --no-cache            # bypass the file cache
+deconflict scan --refresh             # clear cache and rebuild metadata
+deconflict scan --progress            # show live scan progress
 deconflict resolve                    # interactive per-group resolution
-deconflict resolve --tui              # interactive TUI
-deconflict resolve --auto newest      # non-interactive: base|copy|newest|bigger
+deconflict resolve --tui              # launch the Textual TUI
+deconflict resolve --no-tui           # force the CLI resolver
+deconflict resolve --auto newest      # base|copy|newest|bigger|recommended
 deconflict resolve --dry-run          # preview without touching the filesystem
 deconflict init-config                # write ~/.config/deconflict/config.toml
-deconflict config                     # show active config
-deconflict config tools               # show active config for tools
-deconflict patterns                   # list recognized conflict patterns
-deconflict --help                     # all commands & options
+deconflict config                     # show effective configuration
+deconflict config tools               # show tools used for each file kind
+deconflict setup                      # analyze config and external tools
+deconflict patterns --enabled         # list enabled conflict patterns
+deconflict cache clean                # remove stale cache entries
+deconflict cache clean --dry-run      # preview cache cleanup
+deconflict cache clean --all          # remove every cache file
+deconflict cache clean --older-than-days 30
+deconflict version                    # print the version
+deconflict --help                     # all commands and options
 ```
 
 ## Patterns

@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Experimental Rust library modules for cache, media metadata and external tool discovery.
+
 ### Fixed
+- Rust scanning reports cancellation reliably and analysis detects disappearing base files.
+- Experimental Rust analysis detects some Unix file changes even when modification time is restored.
 - Bare invocation (`deconflict [dirs]`) no longer crashes with `typer.exceptions.Exit: 0` when there is nothing to resolve — Typer's `Exit`/`Abort`/`BadParameter` are now translated into process exit codes
 - `deconflict init-config` works from an installed wheel — `config.example.toml` ships as package data (`src/deconflict/config.example.toml`) instead of living in the repo root only
 - "no directories" hint no longer loses `[scan]` to Rich markup parsing
@@ -20,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config.example.toml` moved into the package (`src/deconflict/`) so it is installed with it
 
 ### Added
+- Python executable compatibility contracts and reproducible migration benchmarks.
+- Experimental read-only Rust scanning core with incremental scheduling, in-memory work queues, bounded worker and directory handles, recommendation diagnostics and benchmark comparison; migration remains incomplete.
 - Test case for conflict group without base file
 
 ## [0.2.0]
