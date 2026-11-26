@@ -1,24 +1,28 @@
 use clap::{Args, Parser, Subcommand};
+use console::{measure_text_width, Term};
 use deconflict_core::{
     analysis::analyze_scanned_group_cached,
     cache::{cache_key, clean_cache, FileCache},
     config::{Config, ScanConfig},
-    media::{Tools as MediaTools},
-    tools,
+    media::Tools as MediaTools,
     patterns::Patterns,
     resolve::{prepare, Decision},
     scan::{scan, Event, ScanResult},
+    tools,
 };
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::{
     fs,
-    io::{self, BufRead, IsTerminal, Write},
+    io::{self, BufRead, IsTerminal},
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
-    time::{Duration, Instant},
 };
 
 #[derive(Parser)]
-#[command(name = "deconflict", about = "Resolve conflicted-copy-style sync files")]
+#[command(
+    name = "deconflict",
+    about = "Resolve conflicted-copy-style sync files"
+)]
 struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
@@ -39,9 +43,15 @@ enum Commands {
     /// Show the version
     Version,
     /// List or list enabled conflict patterns
-    Patterns { #[arg(long)] enabled: bool },
+    Patterns {
+        #[arg(long)]
+        enabled: bool,
+    },
     /// Write a documented default config
-    InitConfig { #[arg(long)] path: Option<PathBuf> },
+    InitConfig {
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
     /// Analyze setup and external tools
     Setup,
     /// Print effective configuration
@@ -216,8 +226,16 @@ fn perform_scan(
         return Err("no directories. Pass dirs or set [scan].default_dirs".into());
     }
     let mut count = 0usize;
-    let mut last_update = Instant::now();
-    let terminal = io::stderr().is_terminal();
+    let progress = if show_progress && io::stderr().is_terminal() {
+        let bar = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr_with_hz(4));
+        bar.set_style(
+            ProgressStyle::with_template("scanning ({pos} files): {wide_msg}")
+                .expect("valid progress template"),
+        );
+        Some(bar)
+    } else {
+        None
+    };
     let result = scan(
         roots,
         scan_config,
@@ -228,21 +246,23 @@ fn perform_scan(
                 match event {
                     Event::File(path) => {
                         count += 1;
-                        if last_update.elapsed() >= Duration::from_millis(600) {
-                            let status = format!("scanning ({count} files): {}", path.display());
-                            if terminal {
-                                eprint!("\r{status}");
-                            } else {
-                                eprintln!("{status}");
-                            }
-                            let _ = io::stderr().flush();
-                            last_update = Instant::now();
+                        if let Some(bar) = &progress {
+                            bar.set_position(count as u64);
+                            let (_, columns) = Term::stderr().size_checked().unwrap_or((24, 120));
+                            let prefix_width =
+                                measure_text_width(&format!("scanning ({} files): ", count));
+                            let max_path_width =
+                                columns.saturating_sub(prefix_width as u16) as usize;
+                            bar.set_message(middle_ellipsis(
+                                &path.display().to_string(),
+                                max_path_width,
+                            ));
                         }
                     }
                     Event::Provisional(_, _) => {}
                     Event::Error(path, error) => {
-                        if terminal {
-                            eprintln!("\n{}: {error}", path.display());
+                        if let Some(bar) = &progress {
+                            bar.suspend(|| eprintln!("{}: {error}", path.display()));
                         } else {
                             eprintln!("{}: {error}", path.display());
                         }
@@ -252,12 +272,8 @@ fn perform_scan(
         },
     );
 
-    if show_progress && count > 0 {
-        if terminal {
-            eprintln!("\rscanned {count} files");
-        } else {
-            eprintln!("scanned {count} files");
-        }
+    if let Some(bar) = progress {
+        bar.finish_with_message(format!("scanned {count} files"));
     }
     result
 }
@@ -307,9 +323,8 @@ fn media_tools(config: &Config) -> MediaTools {
 }
 
 fn run_bare_cli(cli: &Cli) -> Result<(), String> {
-    let (scan_config, patterns, roots, config) = effective_scan(
-        cli.config.as_deref(), cli, &cli.dirs, None,
-    )?;
+    let (scan_config, patterns, roots, config) =
+        effective_scan(cli.config.as_deref(), cli, &cli.dirs, None)?;
     let show_progress = std::io::stdout().is_terminal();
     let result = perform_scan(&roots, &scan_config, &patterns, show_progress)?;
     if result.cancelled || !result.errors.is_empty() {
@@ -339,26 +354,37 @@ fn run_bare_cli(cli: &Cli) -> Result<(), String> {
         let _ = io::Write::flush(&mut io::stdout());
 
         let mut answer = String::new();
-        io::stdin().lock().read_line(&mut answer).map_err(|e| e.to_string())?;
+        io::stdin()
+            .lock()
+            .read_line(&mut answer)
+            .map_err(|e| e.to_string())?;
         let answer = answer.trim().to_lowercase();
         let decision = match answer.as_str() {
             "q" | "quit" | "exit" => {
                 println!("aborted after {index} of {} group(s)", result.groups.len());
                 break;
             }
-            "s" | "skip" => { skipped += 1; continue; }
+            "s" | "skip" => {
+                skipped += 1;
+                continue;
+            }
             "h" | "keep-both" => Decision::KeepBoth,
             "0" => Decision::KeepBase,
             value => match value.parse::<usize>() {
-                Ok(copy_index) if copy_index > 0 && copy_index <= group.conflicts.len() =>
-                    Decision::KeepCopy(copy_index - 1),
-                _ => { println!("invalid choice"); continue; }
+                Ok(copy_index) if copy_index > 0 && copy_index <= group.conflicts.len() => {
+                    Decision::KeepCopy(copy_index - 1)
+                }
+                _ => {
+                    println!("invalid choice");
+                    continue;
+                }
             },
         };
 
         let prepared = prepare(&result, index, &stamped.analysis, &roots)
             .map_err(|e| format!("cannot prepare {}: {e}", group.base.display()))?;
-        let outcome = prepared.resolve(decision, &backup, false)
+        let outcome = prepared
+            .resolve(decision, &backup, false)
             .map_err(|e| format!("resolution failed for {}: {e}", group.base.display()))?;
         resolved += 1;
         for (source, destination) in outcome.operations {
@@ -366,9 +392,13 @@ fn run_bare_cli(cli: &Cli) -> Result<(), String> {
         }
     }
 
-    file_cache.clear().map_err(|e| format!("cannot invalidate cache: {e}"))?;
+    file_cache
+        .clear()
+        .map_err(|e| format!("cannot invalidate cache: {e}"))?;
     println!("\nresolved {resolved} group(s)");
-    if skipped > 0 { println!("({skipped} skipped)"); }
+    if skipped > 0 {
+        println!("({skipped} skipped)");
+    }
     Ok(())
 }
 
@@ -396,11 +426,19 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Patterns { enabled } => {
             let mut config = ScanConfig::default();
             if *enabled {
-                config.enabled_patterns = vec!["nextcloud".into(), "pacman".into(), "syncthing".into()];
+                config.enabled_patterns =
+                    vec!["nextcloud".into(), "pacman".into(), "syncthing".into()];
             }
             let patterns = Patterns::build(&config)?;
             println!("name\tenabled\twinner\tmatches");
-            for name in ["nextcloud", "pacman", "syncthing", "dpkg", "rpm", "windows-copy"] {
+            for name in [
+                "nextcloud",
+                "pacman",
+                "syncthing",
+                "dpkg",
+                "rpm",
+                "windows-copy",
+            ] {
                 let is_enabled = config.enabled_patterns.iter().any(|p| p == name);
                 if *enabled && !is_enabled {
                     continue;
@@ -428,18 +466,18 @@ fn run(cli: Cli) -> Result<(), String> {
                 let key = cache_key(&roots).map_err(|e| format!("cannot key cache: {e}"))?;
                 let mut cache = FileCache::new(general_cache(&config), &key, false);
                 if args.refresh {
-                    cache.clear().map_err(|e| format!("cannot clear cache: {e}"))?;
+                    cache
+                        .clear()
+                        .map_err(|e| format!("cannot clear cache: {e}"))?;
                 }
                 let media = media_tools(&config);
                 for group in &result.groups {
-                    let _stamped = analyze_scanned_group_cached(
-                        group,
-                        &mut cache,
-                        args.refresh,
-                        &media,
-                    );
+                    let _stamped =
+                        analyze_scanned_group_cached(group, &mut cache, args.refresh, &media);
                 }
-                cache.save().map_err(|e| format!("cannot save cache: {e}"))?;
+                cache
+                    .save()
+                    .map_err(|e| format!("cannot save cache: {e}"))?;
             }
 
             if result.groups.is_empty() {
@@ -451,9 +489,17 @@ fn run(cli: Cli) -> Result<(), String> {
                         .first()
                         .map(|(_, m)| m.pattern.as_str())
                         .unwrap_or("unknown");
-                    println!("{}\t{}\t{} files", group.base.display(), pattern_name, group.conflicts.len());
+                    println!(
+                        "{}\t{}\t{} files",
+                        group.base.display(),
+                        pattern_name,
+                        group.conflicts.len()
+                    );
                 }
-                println!("{} conflict group(s). Run `deconflict resolve` to act.", result.groups.len());
+                println!(
+                    "{} conflict group(s). Run `deconflict resolve` to act.",
+                    result.groups.len()
+                );
             }
         }
         Commands::Resolve(args) => {
@@ -477,30 +523,20 @@ fn run(cli: Cli) -> Result<(), String> {
             let backup = general_backup(&config);
             let cache_dir = general_cache(&config);
             let key = cache_key(&roots).map_err(|e| format!("cannot key cache: {e}"))?;
-            let mut file_cache = FileCache::new(
-                &cache_dir,
-                &key,
-                args.dry_run || args.no_cache,
-            );
+            let mut file_cache = FileCache::new(&cache_dir, &key, args.dry_run || args.no_cache);
             if args.refresh && !args.no_cache && !args.dry_run {
-                file_cache.clear().map_err(|e| format!("cannot clear cache: {e}"))?;
+                file_cache
+                    .clear()
+                    .map_err(|e| format!("cannot clear cache: {e}"))?;
             }
 
             let media = media_tools(&config);
             let mut resolved = 0;
             for (index, group) in result.groups.iter().enumerate() {
                 let stamped = if args.no_cache {
-                    deconflict_core::analysis::analyze_scanned_group_with_media(
-                        group,
-                        &media,
-                    )
+                    deconflict_core::analysis::analyze_scanned_group_with_media(group, &media)
                 } else {
-                    analyze_scanned_group_cached(
-                        group,
-                        &mut file_cache,
-                        args.refresh,
-                        &media,
-                    )
+                    analyze_scanned_group_cached(group, &mut file_cache, args.refresh, &media)
                 }
                 .map_err(|e| format!("analysis failed for {}: {e}", group.base.display()))?;
                 let prepared = prepare(&result, index, &stamped.analysis, &roots)
@@ -510,12 +546,18 @@ fn run(cli: Cli) -> Result<(), String> {
                     "base" => Decision::KeepBase,
                     "copy" => Decision::KeepCopy(0),
                     "newest" => match stamped.analysis.winner_hint() {
-                        Some(deconflict_core::analysis::Recommendation::Copy(i)) => Decision::KeepCopy(i),
+                        Some(deconflict_core::analysis::Recommendation::Copy(i)) => {
+                            Decision::KeepCopy(i)
+                        }
                         _ => Decision::KeepBase,
                     },
                     "bigger" => {
                         let base = stamped.analysis.base.as_ref();
-                        let biggest = stamped.analysis.copies.iter().enumerate()
+                        let biggest = stamped
+                            .analysis
+                            .copies
+                            .iter()
+                            .enumerate()
                             .filter(|(_, c)| base.is_none_or(|b| c.size > b.size))
                             .max_by_key(|(_, c)| c.size)
                             .map(|(i, _)| i);
@@ -525,17 +567,24 @@ fn run(cli: Cli) -> Result<(), String> {
                         &stamped.analysis,
                         stamped.analysis.kind == "text",
                     ) {
-                        Some(deconflict_core::analysis::Recommendation::Copy(i)) => Decision::KeepCopy(i),
+                        Some(deconflict_core::analysis::Recommendation::Copy(i)) => {
+                            Decision::KeepCopy(i)
+                        }
                         Some(deconflict_core::analysis::Recommendation::Base) => Decision::KeepBase,
                         None => continue,
                     },
                     _ => return Err(format!("unknown auto rule: {rule}")),
                 };
-                let outcome = prepared.resolve(decision, &backup, args.dry_run)
+                let outcome = prepared
+                    .resolve(decision, &backup, args.dry_run)
                     .map_err(|e| format!("resolution failed for {}: {e}", group.base.display()))?;
                 resolved += 1;
                 if args.dry_run {
-                    println!("dry-run: {} ({} operation(s))", group.base.display(), outcome.operations.len());
+                    println!(
+                        "dry-run: {} ({} operation(s))",
+                        group.base.display(),
+                        outcome.operations.len()
+                    );
                 } else {
                     println!("resolved: {}", group.base.display());
                 }
@@ -543,7 +592,9 @@ fn run(cli: Cli) -> Result<(), String> {
             if args.dry_run {
                 println!("dry-run complete: {resolved} group(s)");
             } else if !args.no_cache {
-                file_cache.clear().map_err(|e| format!("cannot invalidate cache: {e}"))?;
+                file_cache
+                    .clear()
+                    .map_err(|e| format!("cannot invalidate cache: {e}"))?;
             }
         }
         Commands::InitConfig { path } => {
@@ -555,14 +606,23 @@ fn run(cli: Cli) -> Result<(), String> {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("cannot create config directory: {e}"))?;
             }
-            fs::write(&target, include_str!("../../src/deconflict/config.example.toml"))
-                .map_err(|e| format!("cannot write config file {}: {e}", target.display()))?;
+            fs::write(
+                &target,
+                include_str!("../../src/deconflict/config.example.toml"),
+            )
+            .map_err(|e| format!("cannot write config file {}: {e}", target.display()))?;
             println!("wrote config: {}", target.display());
         }
         Commands::Setup => {
             let (config, _) = load_config(cli.config.as_deref())?;
             println!("deconflict 0.2.9");
-            println!("  config file: {}", cli.config.clone().unwrap_or_else(default_config_path).display());
+            println!(
+                "  config file: {}",
+                cli.config
+                    .clone()
+                    .unwrap_or_else(default_config_path)
+                    .display()
+            );
             println!("  backup dir:  {}", general_backup(&config).display());
             println!("  cache dir:   {}", general_cache(&config).display());
             let overrides = config
@@ -591,7 +651,9 @@ fn run(cli: Cli) -> Result<(), String> {
                 let overrides = config
                     .tools
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
+                    .map(|(name, value)| {
+                        (name.clone(), value.as_str().unwrap_or_default().to_string())
+                    })
                     .collect();
                 let detected = tools::detect(&overrides);
                 for kind in ["text", "other", "audio", "image", "video", "office", "kdbx"] {
@@ -609,7 +671,10 @@ fn run(cli: Cli) -> Result<(), String> {
                     }
                 }
             } else {
-                println!("config file: {}", path.unwrap_or_else(default_config_path).display());
+                println!(
+                    "config file: {}",
+                    path.unwrap_or_else(default_config_path).display()
+                );
                 println!("[scan]");
                 println!("  default_dirs = {:?}", scan.default_dirs);
                 println!("  enabled_patterns = {:?}", scan.enabled_patterns);
@@ -619,7 +684,12 @@ fn run(cli: Cli) -> Result<(), String> {
             }
         }
         Commands::Cache(args) => match &args.command {
-            CacheCommands::Clean { config, dry_run, all, older_than_days } => {
+            CacheCommands::Clean {
+                config,
+                dry_run,
+                all,
+                older_than_days,
+            } => {
                 let config_path = config.as_deref().or_else(|| cli.config.as_deref());
                 let (cfg, _) = load_config(config_path)?;
                 let cache_dir = general_cache(&cfg);
@@ -630,7 +700,11 @@ fn run(cli: Cli) -> Result<(), String> {
                     println!("cache is clean");
                 } else {
                     for (path, reason) in removed {
-                        println!("{} {} ({reason})", if *dry_run { "would remove" } else { "removed" }, path.display());
+                        println!(
+                            "{} {} ({reason})",
+                            if *dry_run { "would remove" } else { "removed" },
+                            path.display()
+                        );
                     }
                     println!("{freed} byte(s) freed");
                 }
@@ -638,4 +712,36 @@ fn run(cli: Cli) -> Result<(), String> {
         },
     }
     Ok(())
+}
+
+fn middle_ellipsis(path: &str, max_width: usize) -> String {
+    if measure_text_width(path) <= max_width || max_width <= 3 {
+        return path.to_string();
+    }
+    let chars: Vec<char> = path.chars().collect();
+    let head_count = (max_width - 3) / 2;
+    let tail_count = max_width - 3 - head_count;
+    let tail_start = chars.len().saturating_sub(tail_count);
+    let mut out: String = chars[..head_count.min(chars.len())].iter().collect();
+    out.push_str("...");
+    out.extend(chars[tail_start.min(chars.len())..].iter());
+    out
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::middle_ellipsis;
+
+    #[test]
+    fn middle_ellipsis_keeps_head_and_tail() {
+        assert_eq!(
+            middle_ellipsis("/tmp/long-directory/important-name.txt", 20),
+            "/tmp/lon...-name.txt"
+        );
+    }
+
+    #[test]
+    fn middle_ellipsis_leaves_short_paths_alone() {
+        assert_eq!(middle_ellipsis("Readme.md", 20), "Readme.md");
+    }
 }
