@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Experimental Rust library modules for cache, media metadata and external tool discovery.
 - Rust CLI scan progress reuses the previous successful file-count estimate, labels discovery and conflict-analysis counts, and separates timings/counters from the current path on interactive terminals.
+- Rust interactive resolve reports content differences, file metadata, analysis notes and recommendations before prompting for an action.
 
 ### Fixed
 - Rust scanning reports cancellation reliably and analysis detects disappearing base files.
+- Rust metadata reports distinguish creation and modification times and display local timestamps.
 - Experimental Rust analysis detects some Unix file changes even when modification time is restored.
 - Bare invocation (`deconflict [dirs]`) no longer crashes with `typer.exceptions.Exit: 0` when there is nothing to resolve — Typer's `Exit`/`Abort`/`BadParameter` are now translated into process exit codes
 - `deconflict init-config` works from an installed wheel — `config.example.toml` ships as package data (`src/deconflict/config.example.toml`) instead of living in the repo root only

@@ -12,6 +12,9 @@ use deconflict_core::{
 };
 
 pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
+    if args.tui {
+        return Err("the TUI is not implemented yet; use --no-tui".into());
+    }
     let (scan_config, patterns, roots, config) = effective_scan(
         cli.config.as_deref(),
         cli,
@@ -53,6 +56,26 @@ pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
     }
 
     let media = media_tools(&config);
+    if args.auto.is_none() {
+        crate::interactive::resolve_interactively(
+            &result,
+            &roots,
+            &backup,
+            &mut file_cache,
+            &media,
+            crate::interactive::InteractiveOptions {
+                no_cache: args.no_cache,
+                refresh: args.refresh,
+                dry_run: args.dry_run,
+            },
+        )?;
+        if !args.no_cache && !args.dry_run {
+            file_cache
+                .clear()
+                .map_err(|e| format!("cannot invalidate cache: {e}"))?;
+        }
+        return Ok(());
+    }
     let mut resolved = 0;
     for (index, group) in result.groups.iter().enumerate() {
         let stamped = if args.no_cache {

@@ -3,6 +3,7 @@ mod cli_config;
 mod commands;
 mod interactive;
 mod progress;
+mod report;
 
 use clap::Parser;
 use cli::Cli;

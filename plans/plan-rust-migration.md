@@ -115,7 +115,9 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 - Cache/media analysis entry points compile with the Rust library suite.
 - `--no-cache` and `--refresh` are wired and have executable contract coverage.
 - Real scan progress and a skipable bare CLI fallback are implemented.
-- `--tui` remains unimplemented and must not claim a frontend until Step 5.
+- Rust interactive resolve reports per-group metadata, text differences, consideration notes and recommendations, then accepts the recommendation on Enter or base/copy/keep-both/skip/quit actions.
+- Generic Rust metadata reports format created and modified timestamps separately, using Unix change time as the creation-time fallback.
+- `--auto` remains noninteractive; `--tui` clearly reports that the TUI is not implemented.
 - A copied `sample-files/` fixture smoke test found 9 conflict groups successfully.
 
 **CLI completion sequence:**
@@ -123,28 +125,31 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 2. ✓ Fix contract failures and close executable-level resolution, dry-run and backup/log gaps.
 3. ✓ Implement real CLI progress and bare interactive behavior; validate PTY flows where practical.
 4. ✓ Run the full Rust suite, shared contracts and benchmark smoke checks.
-5. Stable CLI milestone reached; create a dedicated branch and commit before further TUI work.
+5. ✓ Add CLI analysis-report parity and its executable contracts; commit the CLI milestone before further TUI work.
 
 **Stable CLI gate:**
 - A release build starts successfully on the target machine.
 - Cache, refresh, no-cache and dry-run contracts pass for Python and Rust.
 - Resolution, backup, JSONL and failure/recovery contracts pass.
 - Existing CLI commands retain compatible options, exit codes and meaningful output.
+- CLI resolution reports file metadata, content differences, considerations, recommendations, and interactive choices consistently with the Python CLI.
 - Bare CLI behavior is usable, and `--tui` is explicitly not advertised before implementation.
 - `mise run check` and the Rust test suite are green.
 
-**Current stopping point — CLI polish complete:**
+**Current stopping point — CLI report parity complete; TUI remains:**
 - `main.rs` now only parses arguments and starts dispatch. CLI definitions, config helpers, progress, bare interactive mode, and scan/resolve commands live in focused modules.
 - Successful scans save the file count in an optional `.count` sidecar; later scans reuse it as a progress estimate. `--no-cache`, dry-run resolution, and incomplete scans do not write estimates. Cache invalidation removes the sidecar.
 - Progress labels distinguish files seen, the previous-run file estimate, directory entries discovered, and conflict copies queued/analyzed. ETA and overlapping discovery/analysis time windows are shown.
 - Interactive progress uses two rows: timings and counters first, current path second; counts are compacted on narrower terminals. Unit tests cover the layout.
 - `.github/instructions/rust.instructions.md` records Rust module boundaries, UI-free core rules, cache safety, test layout and quality gates.
 - Architecture review: separate scan and resolve command modules add value because both implementations have distinct cache/progress/resolution workflows; keep the small remaining command handlers together.
+- The Rust analysis core and CLI presentation are implemented; interactive reports include metadata, content differences, considerations, recommendations and actions.
 - Validation passed: Rust tests, Clippy with warnings denied, release build, shared executable contracts (7 passed, 1 skipped), and a copied `sample-files/` smoke scan (9 conflict groups).
 
 **Next steps:**
-1. Commit the stable CLI milestone on the current branch before implementing the Rust TUI.
-2. Keep Python as the reference until Rust TUI and PTY contracts reach parity; do not switch packaging or require Rust for existing users.
+1. Commit the CLI milestone on the current branch.
+2. Implement the Rust TUI and its PTY contracts.
+3. Keep Python as the reference until Rust TUI contracts reach parity; do not switch packaging or require Rust for existing users.
 
 **Architecture principles:**
 - `main.rs` is process startup and dispatch only.

@@ -1,5 +1,6 @@
 use crate::cache::FileCache;
 use crate::media::{self, Tools as MediaTools};
+use chrono::{DateTime, Local};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
@@ -370,18 +371,50 @@ fn generic_fields(path: &Path, kind: &str, tools: &MediaTools) -> BTreeMap<Strin
     if let Ok(meta) = path.metadata() {
         fields.insert("size".into(), meta.len().to_string());
         if let Ok(modified) = meta.modified() {
-            let seconds = modified
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs_f64())
-                .unwrap_or_else(|e| -e.duration().as_secs_f64());
-            fields.insert("modified".into(), format!("{seconds:.6}"));
-            fields.insert("created".into(), format!("{seconds:.6}"));
+            fields.insert(
+                "modified".into(),
+                DateTime::<Local>::from(modified)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+            );
+        }
+        if let Some(created) = meta.created().ok().or_else(|| metadata_change_time(&meta)) {
+            fields.insert(
+                "created".into(),
+                DateTime::<Local>::from(created)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+            );
         }
     }
     if let Some(content) = media::content_fields(path, kind, tools) {
         fields.extend(content);
     }
     fields
+}
+
+#[cfg(unix)]
+fn metadata_change_time(metadata: &std::fs::Metadata) -> Option<SystemTime> {
+    use std::os::unix::fs::MetadataExt;
+    let seconds = metadata.ctime();
+    let nanoseconds = metadata.ctime_nsec() as u64;
+    if seconds >= 0 {
+        SystemTime::UNIX_EPOCH
+            .checked_add(std::time::Duration::new(seconds as u64, nanoseconds as u32))
+    } else {
+        let duration = if nanoseconds == 0 {
+            std::time::Duration::from_secs(seconds.unsigned_abs())
+        } else {
+            std::time::Duration::from_secs(seconds.unsigned_abs() - 1)
+                .checked_add(std::time::Duration::from_nanos(1_000_000_000 - nanoseconds))?
+        };
+        SystemTime::UNIX_EPOCH.checked_sub(duration)
+    }
+}
+
+#[cfg(not(unix))]
+fn metadata_change_time(_metadata: &std::fs::Metadata) -> Option<SystemTime> {
+    None
 }
 
 fn assemble_group(
