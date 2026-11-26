@@ -4,6 +4,7 @@ use crate::{
     progress::perform_scan,
     report::group_report,
 };
+use console::style;
 use deconflict_core::{
     analysis::{
         analyze_scanned_group_cached, analyze_scanned_group_with_media, recommendation_label,
@@ -147,7 +148,7 @@ fn prompt_choice(
     loop {
         let mut choices = Vec::new();
         if let Some(default) = &default {
-            choices.push(default.clone());
+            choices.push(style(default).cyan().bold().to_string());
         }
         if analysis.base.is_some() {
             choices.push("(0) keep base".into());

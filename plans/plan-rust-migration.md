@@ -117,6 +117,7 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 - Real scan progress and a skipable bare CLI fallback are implemented.
 - Rust interactive resolve reports per-group metadata, text differences, consideration notes and recommendations, then accepts the recommendation on Enter or base/copy/keep-both/skip/quit actions.
 - Generic Rust metadata reports format created and modified timestamps separately, using Unix change time as the creation-time fallback.
+- ExifTool metadata is parsed from JSON so MP3 fields and ID3 tags render with their real names and values. Tables highlight differences, newer/larger values, and recommendations with terminal-aware styling that is disabled for piped output or `NO_COLOR`.
 - `--auto` remains noninteractive; `--tui` clearly reports that the TUI is not implemented.
 - A copied `sample-files/` fixture smoke test found 9 conflict groups successfully.
 
@@ -143,8 +144,10 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 - Interactive progress uses two rows: timings and counters first, current path second; counts are compacted on narrower terminals. Unit tests cover the layout.
 - `.github/instructions/rust.instructions.md` records Rust module boundaries, UI-free core rules, cache safety, test layout and quality gates.
 - Architecture review: separate scan and resolve command modules add value because both implementations have distinct cache/progress/resolution workflows; keep the small remaining command handlers together.
-- The Rust analysis core and CLI presentation are implemented; interactive reports include metadata, content differences, considerations, recommendations and actions.
+- The Rust analysis core and CLI presentation are implemented; interactive reports include metadata, content differences, considerations, recommendations and actions. ExifTool JSON fields are preserved and styled tables honor terminal color support.
 - Validation passed: Rust tests, Clippy with warnings denied, release build, shared executable contracts (7 passed, 1 skipped), and a copied `sample-files/` smoke scan (9 conflict groups).
+
+**Follow-up complete:** restored full ExifTool metadata in Rust reports and added terminal-aware styling.
 
 **Next steps:**
 1. Commit the CLI milestone on the current branch.

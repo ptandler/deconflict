@@ -140,11 +140,7 @@ fn run_tool(tool: &Path, args: &[&str], path: &Path) -> Option<String> {
 fn exif_key(raw: &str) -> String {
     let chars: Vec<char> = raw.chars().collect();
     let count = chars.iter().take_while(|c| c.is_ascii_uppercase()).count();
-    let lower = if count > 1 && !chars.get(count).is_some_and(|c| c.is_ascii_digit()) {
-        count - 1
-    } else {
-        count
-    };
+    let lower = if count > 1 { count - 1 } else { count };
     chars[..lower]
         .iter()
         .collect::<String>()
@@ -153,7 +149,9 @@ fn exif_key(raw: &str) -> String {
 }
 
 fn exif_fields(path: &Path, tool: Option<&Path>, image: bool) -> Option<Fields> {
-    let output = run_tool(tool?, &["-s", "-S"], path)?;
+    let output = run_tool(tool?, &["-s", "-j"], path)?;
+    let parsed: serde_json::Value = serde_json::from_str(&output).ok()?;
+    let tags = parsed.as_array()?.first()?.as_object()?;
     let skip = [
         "SourceFile",
         "ExifToolVersion",
@@ -184,32 +182,47 @@ fn exif_fields(path: &Path, tool: Option<&Path>, image: bool) -> Option<Fields> 
     ];
     let mut fields = Fields::new();
     let (mut width, mut height) = (None, None);
-    for line in output.lines() {
-        let Some((key, value)) = line.split_once(':') else {
+    for (key, raw_value) in tags {
+        let Some(value) = exif_value(raw_value) else {
             continue;
         };
-        let value = value.trim();
         if key == "ImageWidth" {
-            width = Some(value);
+            width = Some(value.clone());
         }
         if key == "ImageHeight" {
-            height = Some(value);
+            height = Some(value.clone());
         }
-        if skip.contains(&key)
+        if skip.contains(&key.as_str())
             || value.is_empty()
             || value.chars().count() > 200
             || value.starts_with("(Binary data")
         {
             continue;
         }
-        fields.insert(exif_key(key), value.to_owned());
+        fields.insert(exif_key(key), value);
     }
     if image {
-        if let (Some(w), Some(h)) = (width, height) {
+        if let (Some(w), Some(h)) = (width.as_deref(), height.as_deref()) {
             fields.insert("dimensions".into(), format!("{w}x{h}"));
         }
     }
     (!fields.is_empty()).then_some(fields)
+}
+
+fn exif_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::String(value) => {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        }
+        serde_json::Value::Array(values) => {
+            let values: Vec<_> = values.iter().filter_map(exif_value).collect();
+            (!values.is_empty()).then(|| values.join(", "))
+        }
+        serde_json::Value::Null | serde_json::Value::Object(_) => None,
+    }
 }
 
 fn image_fields(path: &Path) -> io::Result<Fields> {
@@ -627,7 +640,7 @@ mod tests {
             MetadataComparison::Unavailable
         );
         assert_eq!(exif_key("MIMEType"), "mimeType");
-        assert_eq!(exif_key("ID3Size"), "id3Size");
+        assert_eq!(exif_key("ID3Size"), "iD3Size");
     }
 
     #[test]
@@ -804,7 +817,11 @@ mod tests {
             .join(format!("deconflict-tools-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let tool = dir.join("tool");
-        std::fs::write(&tool, "#!/bin/sh\nprintf 'FileName: ignored\\nImageWidth: 42\\nImageHeight: 21\\nMIMEType: image/png\\n'\n").unwrap();
+        std::fs::write(
+            &tool,
+            "#!/bin/sh\nprintf '[{\"FileName\":\"ignored\",\"ImageWidth\":42,\"ImageHeight\":21,\"MIMEType\":\"image/png\"}]\\n'\n",
+        )
+        .unwrap();
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
         let tools = Tools {
             exiftool: Some(tool.clone()),
@@ -814,6 +831,17 @@ mod tests {
         assert_eq!(fields["dimensions"], "42x21");
         assert_eq!(fields["mimeType"], "image/png");
         assert!(!fields.contains_key("fileName"));
+        std::fs::write(
+            &tool,
+            "#!/bin/sh\n[ \"$1\" = \"-s\" ] && [ \"$2\" = \"-j\" ] || exit 1\nprintf '[{\"MIMEType\":\"audio/mpeg\",\"MPEGAudioVersion\":1,\"ID3Size\":281,\"Comment\":\"I added a comment\",\"RecordingTime\":\"2026:09:19\"}]\\n'\n",
+        )
+        .unwrap();
+        let fields = content_fields(Path::new("x.mp3"), "audio", &tools).unwrap();
+        assert_eq!(fields["mimeType"], "audio/mpeg");
+        assert_eq!(fields["mpegAudioVersion"], "1");
+        assert_eq!(fields["iD3Size"], "281");
+        assert_eq!(fields["comment"], "I added a comment");
+        assert_eq!(fields["recordingTime"], "2026:09:19");
         std::fs::write(&tool, "#!/bin/sh\nprintf '[STREAM]\\ncodec_name=h264\\ncodec_type=video\\nwidth=42\\nheight=21\\n[/STREAM]\\n'\n").unwrap();
         assert_eq!(
             video_summary(Path::new("x.mp4"), Some(&tool)),

@@ -151,6 +151,7 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(!stdout.contains("\u{1b}["));
     for expected in [
         "Group 1/1 — Readme.md",
         "files differ in content",
