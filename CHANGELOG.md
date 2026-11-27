@@ -13,11 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust interactive resolve reports content differences, file metadata, analysis notes and recommendations before prompting for an action.
 - Rust interactive resolve streams completed group analyses during scanning; `--wait-for-scan` and `--wait-for-analysis` offer buffered-start modes, with choices applied only after a complete scan.
 - Rust analysis tables use terminal-aware color and emphasis, and include all available ExifTool audio/image metadata.
+- Rust interactive reports show group positions and pending-work status, `(m)` reprints the report, and `(?)` maps each offered action to its actual command for every file kind.
+- Rust groups with 3+ files render one wide metadata table when the terminal allows it, with wrapped file headers instead of one table per copy; 3- and 4-file sample groups were added under `sample_files/`.
 
 ### Fixed
 - Rust interactive scan progress pauses while a prompt is open; wait messages are shown only while work remains.
 - Rust scanning reports cancellation reliably and analysis detects disappearing base files.
 - Rust metadata reports distinguish creation and modification times and display local timestamps.
+- Rust scan summaries print immediately on completion and exclude time spent waiting for interactive input.
+- Rust interactive analysis reuses scanner file snapshots, hashing each conflict copy once; stale snapshots are re-hashed.
 - Rust ExifTool parsing now reads its JSON output, preserving metadata keys and values instead of misreading colon-delimited dates as field names.
 - Experimental Rust analysis detects some Unix file changes even when modification time is restored.
 - Bare invocation (`deconflict [dirs]`) no longer crashes with `typer.exceptions.Exit: 0` when there is nothing to resolve — Typer's `Exit`/`Abort`/`BadParameter` are now translated into process exit codes

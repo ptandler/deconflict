@@ -19,6 +19,7 @@ pub enum ActionKind {
     Quit,
     ForceQuit,
     TextDiff,
+    Metadata,
     Config,
     Tool {
         operation: ToolOperation,
@@ -92,7 +93,8 @@ pub fn actions_for(
 
     add_file_actions(&mut actions, analysis, config, tools);
 
-    actions.push(action("?", "config", ActionKind::Config, None));
+    actions.push(action("m", "metadata", ActionKind::Metadata, None));
+    actions.push(action("?", "tools/config", ActionKind::Config, None));
     actions.push(action("q", "quit after scan", ActionKind::Quit, None));
     actions.push(action("Q", "force quit", ActionKind::ForceQuit, None));
     actions
@@ -577,6 +579,7 @@ mod tests {
         assert!(keys.contains(&"d"));
         assert!(keys.contains(&"x"));
         assert!(keys.contains(&"e"));
+        assert!(keys.contains(&"m"));
         assert!(!keys.contains(&"v"));
         assert!(actions.iter().any(|action| action.key == "Q"));
 

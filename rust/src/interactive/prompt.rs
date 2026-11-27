@@ -15,6 +15,7 @@ pub(super) enum PromptChoice {
     Skip,
     Quit,
     ForceQuit,
+    Reprint,
     Review,
 }
 
@@ -88,7 +89,8 @@ pub(super) fn prompt_choice(
                 Ok(diff) => print!("{diff}"),
                 Err(error) => eprintln!("text diff failed: {error}"),
             },
-            ActionKind::Config => print_config(analysis, config, tools),
+            ActionKind::Config => print_action_map(analysis, &actions, config, tools),
+            ActionKind::Metadata => return Ok(PromptChoice::Reprint),
             ActionKind::Tool { .. } => {
                 run_tool_action(analysis, selected, tools);
                 return Ok(PromptChoice::Review);
@@ -107,8 +109,37 @@ fn parse_quit_choice(answer: &str) -> Option<PromptChoice> {
     }
 }
 
-fn print_config(analysis: &GroupAnalysis, config: &Config, tools: &Tools) {
+fn print_action_map(
+    analysis: &GroupAnalysis,
+    actions: &[ActionDescriptor],
+    config: &Config,
+    tools: &Tools,
+) {
     println!("[file type: {}]", analysis.kind);
+    println!("actions and commands:");
+    for action in actions {
+        let label = format!("({}) {}", action.key, action.label);
+        match &action.kind {
+            ActionKind::Tool { .. } => match actions::commands_for(analysis, action, tools) {
+                Ok(commands) if !commands.is_empty() => {
+                    let commands = commands
+                        .iter()
+                        .map(|command| {
+                            format!("{} ({})", display_command(command), mode_name(command.mode))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    println!("  {label} -> {commands}");
+                }
+                Ok(_) => println!("  {label} -> no matching file for this action"),
+                Err(error) => println!("  {label} -> unavailable ({error})"),
+            },
+            ActionKind::TextDiff => println!("  {label} -> built-in text diff"),
+            ActionKind::Metadata => println!("  {label} -> built-in metadata report"),
+            ActionKind::Config => println!("  {label} -> this action list"),
+            _ => println!("  {label} -> no external command"),
+        }
+    }
     print_config_entry("file_types", &config.file_types, &analysis.kind);
     print_config_entry("file_types_edit", &config.file_types_edit, &analysis.kind);
     for tool_name in actions::tool_names_for_kind(&analysis.kind, config) {

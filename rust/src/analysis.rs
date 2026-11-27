@@ -95,6 +95,75 @@ pub fn analyze_scanned_group_cached(
     })
 }
 
+/// Analyze a scanned group, reusing conflict-copy snapshots captured during scanning.
+///
+/// Snapshots are validated against current size and mtime; stale ones are re-hashed.
+pub fn analyze_scanned_group_with_snapshots(
+    group: &crate::scan::Group,
+    snapshots: Vec<Option<FileInfo>>,
+    mut cache: Option<&mut FileCache>,
+    refresh: bool,
+    tools: &MediaTools,
+) -> io::Result<StampedGroupAnalysis> {
+    let base = if group.base.exists() {
+        if refresh {
+            Some(analyze(&group.base)?)
+        } else if let Some(cache) = cache.as_deref_mut() {
+            Some(analyze_cached(&group.base, cache, false)?)
+        } else {
+            Some(analyze(&group.base)?)
+        }
+    } else {
+        None
+    };
+
+    let mut copies = Vec::with_capacity(group.conflicts.len());
+    for (index, (path, _)) in group.conflicts.iter().enumerate() {
+        let info = if !refresh {
+            match snapshots.get(index).and_then(Option::as_ref) {
+                Some(snapshot) if snapshot_matches(path, snapshot)? => {
+                    if let Some(cache) = cache.as_deref_mut() {
+                        let meta = path.metadata()?;
+                        cache.put(
+                            path,
+                            snapshot.size,
+                            mtime_value(&meta)?,
+                            &snapshot.sha256,
+                            snapshot.is_text,
+                        )?;
+                    }
+                    snapshot.clone()
+                }
+                _ => analyze_copy(path, cache.as_deref_mut(), refresh)?,
+            }
+        } else {
+            analyze_copy(path, cache.as_deref_mut(), refresh)?
+        };
+        copies.push(info);
+    }
+
+    Ok(StampedGroupAnalysis {
+        analysis: assemble_group(base, copies, tools)?,
+        copy_stamps: group
+            .conflicts
+            .iter()
+            .map(|(_, m)| m.stamp.clone())
+            .collect(),
+    })
+}
+
+fn analyze_copy(path: &Path, cache: Option<&mut FileCache>, refresh: bool) -> io::Result<FileInfo> {
+    match cache {
+        Some(cache) => analyze_cached(path, cache, refresh),
+        None => analyze(path),
+    }
+}
+
+fn snapshot_matches(path: &Path, info: &FileInfo) -> io::Result<bool> {
+    let meta = path.metadata()?;
+    Ok(meta.len() == info.size && meta.modified()? == info.modified)
+}
+
 impl GroupAnalysis {
     /// Python's mtime hint: the first item wins ties, even without a base.
     pub fn winner_hint(&self) -> Option<Recommendation> {
@@ -335,14 +404,18 @@ fn analyze_infos(
     assemble_group(base, copies_info, tools)
 }
 
-fn analyze_cached(path: &Path, cache: &mut FileCache, refresh: bool) -> io::Result<FileInfo> {
-    let meta = path.metadata()?;
-    let size = meta.len();
-    let mtime = meta
+fn mtime_value(meta: &std::fs::Metadata) -> io::Result<f64> {
+    Ok(meta
         .modified()?
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
-        .unwrap_or_else(|e| -e.duration().as_secs_f64());
+        .unwrap_or_else(|e| -e.duration().as_secs_f64()))
+}
+
+fn analyze_cached(path: &Path, cache: &mut FileCache, refresh: bool) -> io::Result<FileInfo> {
+    let meta = path.metadata()?;
+    let size = meta.len();
+    let mtime = mtime_value(&meta)?;
 
     if !refresh {
         if let Some(entry) = cache.get(path, size, mtime) {
@@ -803,5 +876,44 @@ mod tests {
         std::fs::rename(&path, dir.path().join("old")).unwrap();
         std::fs::write(&path, b"new").unwrap();
         assert!(validate_snapshot(&path, &before, &file.metadata().unwrap()).is_err());
+    }
+
+    #[test]
+    fn stale_scanner_snapshot_is_rehashed() {
+        use crate::{patterns::ConflictMatch, scan::Group};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.md");
+        let copy = dir.path().join("copy (conflicted copy 1).md");
+        std::fs::write(&base, b"base").unwrap();
+        std::fs::write(&copy, b"old").unwrap();
+        let stale = analyze(&copy).unwrap();
+        std::fs::write(&copy, b"new content").unwrap();
+
+        let group = Group {
+            base,
+            conflicts: vec![(
+                copy.clone(),
+                ConflictMatch {
+                    pattern: "nextcloud".into(),
+                    base_name: "base.md".into(),
+                    winner: "copy".into(),
+                    raw: "copy (conflicted copy 1).md".into(),
+                    stamp: Some("1".into()),
+                },
+            )],
+        };
+        let fresh = analyze(&copy).unwrap();
+        let result = analyze_scanned_group_with_snapshots(
+            &group,
+            vec![Some(stale.clone())],
+            None,
+            false,
+            &MediaTools::default(),
+        )
+        .unwrap();
+
+        assert_eq!(result.analysis.copies[0].sha256, fresh.sha256);
+        assert_ne!(result.analysis.copies[0].sha256, stale.sha256);
     }
 }

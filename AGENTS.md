@@ -1,9 +1,9 @@
 # AGENTS.md — deconflict
 
-Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `.pacnew/.pacsave/.pacorig`, Syncthing `.sync-conflict-*`). CLI = Typer + Rich, TUI = Textual (optional extra); core logic is UI-free so a PySide GUI could reuse it too.
+Interactive resolver for "conflicted copy"-style sync files (Nextcloud, pacman `.pacnew/.pacsave/.pacorig`, Syncthing `.sync-conflict-*`). Rust WIP in `rust/` is the active implementation; the Python implementation is frozen as the behavioral reference.
 
 ## Main plan
-Read `.opencode/plans/2026-08-30-deconflict.md` first — it contains the decisions, structure, behavior, and current todo list. This file is the quick reference for conventions.
+Read `plans/plan-rust-migration.md` first — decisions, structure, behavior and current tasks. `.opencode/plans/2026-08-30-deconflict.md` is absent in this checkout. This file is the quick reference for conventions.
 For each task you work: when starting and finishing the task, please update plan; you might want to include important results, also at intermediate steps. be brief and concise!
 
 ## Setup & commands (mise + uv)
@@ -15,24 +15,34 @@ uv run ruff check .          # lint
 uv run ruff format .         # format
 uv run pytest                # tests
 mise run check               # lint + format-check + pytest (CI does same)
+cargo fmt --manifest-path rust/Cargo.toml --all
+cargo test --manifest-path rust/Cargo.toml
+cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+cargo build --manifest-path rust/Cargo.toml --release
 ```
 
 ## Layout
 ```
-src/deconflict/  cli.py(typer) engine.py(UI-free) scan.py patterns.py analyze.py
-                 media.py resolve.py cache.py tools.py paths.py launchers.py config.py
-                 render.py(Rich renderables) actions.py(shared action matrix)
-                 tui/   app.py views.py actions.py (Textual, optional)
-tests/           pytest; fixtures = COPIES of "sample-files/" in tmpdir — never write into "sample-files/"
-.opencode/plans/ project plans (main plan + tui-specific plan)
+rust/src/        lib.rs(UI-free core: patterns/scan/analysis/cache/resolve/media/tools)
+                 cli.rs commands/ progress.rs report.rs interactive/ (CLI frontend)
+rust/tests/      core, cache, resolve and executable-contract tests
+rust/Cargo.toml  Rust package and binary
+sample_files/    new Rust-only sample groups (sample-files/ stays frozen for Python contracts)
+src/deconflict/  frozen Python reference; read for behavior, do not modify
+tests/           pytest executable contracts; fixtures = COPIES of "sample-files/" in tmpdir
+plans/           main migration plan and related plans
 ```
 
 ## Conventions
+- Work in `rust/` only; do not modify Python sources or tests — Python is the read-only compatibility reference.
+- Do not modify `sample-files/` (frozen Python fixture); add new Rust sample groups under `sample_files/` only when requested.
+- Rust core stays UI-free; see `.github/instructions/rust.instructions.md` for module boundaries and quality gates.
+- Historical Python conventions below apply to the frozen reference only.
 - Type hints everywhere; `from __future__ import annotations`; line length 100 (ruff).
 - One concern per module. Never import Rich/Typer in non-UI modules (`engine.py` must stay UI-free).
 - New conflict format: add matcher in `patterns.py` + entry in `PATTERNS`. Custom regex via config.
 - Loser semantics: Nextcloud copy = local changes, base = server version. Pacman `.pacnew` = new upstream winner. Keep generic (pattern declares base/winner).
-- Destructive ops ONLY via `resolve.py::Resolver.move_to_backup()` → backup OUTSIDE scan roots; never `os.remove`. `--dry-run` must not touch the filesystem.
+- Destructive ops ONLY through `rust/src/resolve.rs` (backup OUTSIDE scan roots, serialize mutations); never delete sources directly. `--dry-run` must not touch the filesystem.
 - Media: audio=mutagen, images=Pillow, video=ffprobe, office=stdlib zipfile text. External tools via `tools.py` (`shutil.which`, per-OS defaults) — never hard-require.
 - Windows: pathlib only, `os.name` branches in `tools.py`, case-insensitive filename matching on NT.
 - Decision log: JSONL in backup dir. Cache: JSON in cache dir.

@@ -153,7 +153,7 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
     );
     assert!(!stdout.contains("\u{1b}["));
     for expected in [
-        "Group ready — Readme.md",
+        "Group 1/1 — Readme.md",
         "files differ in content",
         "full paths:",
         "metadata diff",
@@ -175,6 +175,95 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
     assert!(base.exists());
     assert!(copy.exists());
     assert!(!cache_dir.exists());
+}
+
+#[test]
+fn metadata_action_reprints_the_group_report() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("scan");
+    let config = temp.path().join("config.toml");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("Readme.md"), b"base\n").unwrap();
+    fs::write(root.join("Readme.md.pacnew"), b"copy\n").unwrap();
+    write_config(&config, &temp.path().join("cache"));
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+        .arg("--config")
+        .arg(&config)
+        .arg("resolve")
+        .arg("--no-cache")
+        .arg("--dry-run")
+        .arg(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"m\nq\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.matches("Group 1/1 — Readme.md").count() >= 2,
+        "{stdout}"
+    );
+    assert!(stdout.matches("metadata diff").count() >= 2, "{stdout}");
+}
+
+#[test]
+fn help_maps_actions_to_their_commands() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("scan");
+    let config = temp.path().join("config.toml");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("song.mp3"), b"base").unwrap();
+    fs::write(root.join("song.mp3.pacnew"), b"copy").unwrap();
+    fs::write(
+        &config,
+        format!(
+            "[general]\ncache_dir = {:?}\n[tools]\naudio_player = {:?}\n",
+            temp.path().join("cache").to_string_lossy(),
+            "/bin/echo"
+        ),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+        .arg("--config")
+        .arg(&config)
+        .arg("resolve")
+        .arg("--no-cache")
+        .arg("--dry-run")
+        .arg(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"?\nq\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for expected in [
+        "[file type: audio]",
+        "actions and commands:",
+        "(v) listen ->",
+        "/bin/echo",
+        "(m) metadata -> built-in metadata report",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in:\n{stdout}"
+        );
+    }
 }
 
 #[cfg(unix)]

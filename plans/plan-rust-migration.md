@@ -11,7 +11,7 @@ A complete Rust replacement, including a Rust TUI, is feasible and a good learni
 Preserve conflict patterns and custom configuration, CLI and interactive workflows, media metadata and external tools, cache and decision-log behavior, and backup-first resolution. Keep user data safe, including on failures; dry-run must not write anywhere. Record existing discrepancies as explicit compatibility decisions rather than silently reproducing bugs.
 
 ### Scope
-Implement the migration in the delivery order below. Keep the Python implementation as a reference until parity is established; do not modify sample data. Do not create a branch unless requested.
+Implement the migration in the delivery order below. Work in `rust/`; the Python implementation is a frozen, read-only reference until parity is established — do not modify Python sources or tests, and do not modify sample data. Do not create a branch unless requested.
 
 # Technical Design
 
@@ -107,7 +107,7 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 3. Add real progress and bare interactive behavior, then the Ratatui TUI and PTY coverage.
 4. Keep Python as the reference until Rust contracts pass; do not switch packaging or require Rust for existing users.
 
-###   Step 4: Finish CLI parity — in progress
+### ✓ Step 4: Finish CLI parity
 
 **CLI parity status:**
 - Restored the Rust CLI build and implemented setup/config/cache handlers.
@@ -169,6 +169,23 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 - Rust CLI presents clearer grouped choices, shows only available tool actions, reports relevant file-type/tool configuration, waits for launched tools, and re-analyzes groups after tools return.
 - Added focused coverage for action availability, command arguments, tool modes, missing siblings, edit/re-analysis, and the existing `q`/`Q` cancellation behavior.
 - Verified with formatting, all Rust tests, Clippy with warnings denied, and a release build.
+
+**CLI refinements — complete:**
+- Group reports show `Group x/y` (final total when known, discovered-so-far count otherwise) plus a one-time status snapshot for pending scan/analysis work; prompts are not redrawn while waiting for input.
+- `(m) metadata` reprints the current group report.
+- `(?) tools/config` lists each offered action with its exact external command, tool mode and configuration status for every file kind.
+- The scan summary prints as soon as scanning finishes; timings subtract time spent at prompts.
+
+**Analysis speed — complete:**
+- Verified scan copy hashing is parallel with an analysis-favoring heuristic; rich group analysis is a separate FIFO thread and previously rehashed every copy. Interactive pipeline now passes scanner `FileInfo` snapshots to group analysis, validating size/mtime and re-hashing stale entries; copies are hashed once per scan.
+- Scan/analysis still overlap across directories. There is no in-process OS priority; inherited `nice`/`ionice` remains the intended control. `--wait-for-*` changes prompt timing, not scheduling.
+
+**Multi-copy reports — complete:**
+- Added `sample_files/multi-three/` (3 files) and `sample_files/multi-four/` (4 files) outside the frozen `sample-files/` fixture used by Python contracts.
+- Groups with 3+ files render one wide table when terminal width allows (headers wrap to 2–3 lines); narrow terminals keep the existing per-copy tables.
+
+**next**
+- implement the Rust TUI (below); keep Python as reference until Rust TUI contracts reach parity.
 
 **Next step: implement the Rust TUI**
 1. Reuse the scanner's directory/group events and add PTY contracts.
