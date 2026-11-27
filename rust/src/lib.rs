@@ -1,4 +1,5 @@
 //! UI-free discovery, analysis, and experimental integrations.
+pub mod actions;
 pub mod analysis;
 pub mod cache;
 pub mod config;

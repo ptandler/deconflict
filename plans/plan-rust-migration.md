@@ -158,8 +158,29 @@ Status: 61 Rust library tests pass. The 61-test library suite is green after the
 
 **Streaming CLI follow-up — complete:** progress redraws suspend while reports and prompts are displayed; “Choice recorded” and scan/analysis wait messages appear only when results are actually pending, and identical statuses are not repeated. On `q`, finish outstanding scan work quietly so prior choices remain eligible and the successful-scan estimate can still be saved. Validated by Rust unit/integration tests, Clippy, and a pseudo-terminal prompt/progress smoke test.
 
-**Next steps:**
-1. Implement the Rust TUI and its PTY contracts, reusing the scanner's directory/group events.
+**Quit behavior — implemented:**
+- `q` quits interaction but lets an active scan finish, preserving already recorded choices.
+- `Q` cancels active scanning and queued group analysis, discards buffered choices, and does not persist a successful-scan estimate.
+- Validated prompt case distinction, cancellation state, and executable behavior (no resolution or estimate on `Q`).
+
+**Action milestone — complete in Rust:**
+- Kept Python files and behavior unchanged; used the Python action matrix as a compatibility reference.
+- Added UI-free action descriptors, per-kind availability, command construction, tool-mode classification, and text diff handling.
+- Rust CLI presents clearer grouped choices, shows only available tool actions, reports relevant file-type/tool configuration, waits for launched tools, and re-analyzes groups after tools return.
+- Added focused coverage for action availability, command arguments, tool modes, missing siblings, edit/re-analysis, and the existing `q`/`Q` cancellation behavior.
+- Verified with formatting, all Rust tests, Clippy with warnings denied, and a release build.
+
+**Next step: implement the Rust TUI**
+1. Reuse the scanner's directory/group events and add PTY contracts.
+   1. TUI layout: main split is left / right, separator movable by mouse
+   2. left side: list all groups found
+   3. right side: selected group with two vertical panes:
+      1. top pane: details with several tabs:
+         1. meta: print the meta table, same as in CLI
+         2. files: list all files in group with columns: #, file (= name), size (include diff to #0 file), mtime, metadata diff (1 line as in py)
+         3. when a file is selected, we can show file details below the list inside a second pane in this tab. might depend on the file type and needs to be further specified. for text: head 20 lines, for img & audio: metadata
+      2. pane at bottom: a button for each available action, identical to the CLI actions but as buttons
+   4. bottom: status rows like the progress report we already have
 2. Keep Python as the reference until Rust TUI contracts reach parity; do not switch packaging or require Rust for existing users.
 
 **Architecture principles:**

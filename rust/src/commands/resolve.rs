@@ -1,6 +1,6 @@
 use crate::{
     cli::{Cli, ResolveArgs},
-    cli_config::{effective_scan, general_backup, general_cache, media_tools},
+    cli_config::{detected_tools, effective_scan, general_backup, general_cache, media_tools},
     progress::perform_scan,
 };
 use deconflict_core::{
@@ -24,12 +24,15 @@ pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
     let backup = general_backup(&config);
     let cache_dir = general_cache(&config);
     let media = media_tools(&config);
+    let external_tools = detected_tools(&config);
     if args.auto.is_none() {
         return crate::interactive::run_interactive_scan(
             crate::interactive::InteractiveScanRequest {
                 roots: &roots,
                 scan_config: &scan_config,
                 patterns: &patterns,
+                config: &config,
+                external_tools: &external_tools,
                 backup: &backup,
                 cache_dir: &cache_dir,
                 media: &media,

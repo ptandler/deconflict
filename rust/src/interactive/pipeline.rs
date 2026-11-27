@@ -1,8 +1,8 @@
 use super::prompt::{prompt_choice, PromptChoice};
 use crate::{
     cli::Cli,
-    cli_config::{effective_scan, general_backup, general_cache, media_tools},
-    progress::{perform_scan_with_progress, ScanProgress},
+    cli_config::{detected_tools, effective_scan, general_backup, general_cache, media_tools},
+    progress::{perform_scan_with_progress_cancel, ScanProgress},
     report::group_report,
 };
 use deconflict_core::{
@@ -10,17 +10,22 @@ use deconflict_core::{
         analyze_scanned_group_cached, analyze_scanned_group_with_media, StampedGroupAnalysis,
     },
     cache::{cache_key, FileCache},
-    config::ScanConfig,
+    config::{Config, ScanConfig},
     media::Tools,
     patterns::Patterns,
     resolve::{prepare, Decision},
     scan::{Group, ScanResult},
+    tools::Tools as ExternalTools,
 };
 use std::{
     collections::BTreeMap,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+        Arc,
+    },
     thread,
 };
 
@@ -28,10 +33,13 @@ pub(crate) fn run_bare_cli(cli: &Cli) -> Result<(), String> {
     let (scan_config, patterns, roots, config) =
         effective_scan(cli.config.as_deref(), cli, &cli.dirs, None)?;
     let show_progress = std::io::stdout().is_terminal();
+    let external_tools = detected_tools(&config);
     run_interactive_scan(InteractiveScanRequest {
         roots: &roots,
         scan_config: &scan_config,
         patterns: &patterns,
+        config: &config,
+        external_tools: &external_tools,
         backup: &general_backup(&config),
         cache_dir: &general_cache(&config),
         media: &media_tools(&config),
@@ -45,6 +53,8 @@ pub(crate) struct InteractiveScanRequest<'a> {
     pub(crate) roots: &'a [PathBuf],
     pub(crate) scan_config: &'a ScanConfig,
     pub(crate) patterns: &'a Patterns,
+    pub(crate) config: &'a Config,
+    pub(crate) external_tools: &'a ExternalTools,
     pub(crate) backup: &'a Path,
     pub(crate) cache_dir: &'a Path,
     pub(crate) media: &'a Tools,
@@ -58,6 +68,8 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
         roots,
         scan_config,
         patterns,
+        config,
+        external_tools,
         backup,
         cache_dir,
         media,
@@ -74,6 +86,7 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     };
     let (group_tx, group_rx) = mpsc::channel::<Group>();
     let (message_tx, message_rx) = mpsc::channel();
+    let scan_cancel = Arc::new(AtomicBool::new(false));
     let scan_progress = ScanProgress::new(show_progress, estimated_file_count);
     let prompt_progress = scan_progress.clone();
 
@@ -82,6 +95,7 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     let analysis_key = key.clone();
     let analysis_media = media.clone();
     let analysis_options = options;
+    let analysis_cancel = scan_cancel.clone();
     let analysis_thread = thread::Builder::new()
         .name("deconflict-group-analysis".into())
         .spawn(move || {
@@ -91,6 +105,9 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
                 analysis_options.no_cache || analysis_options.dry_run,
             );
             while let Ok(group) = group_rx.recv() {
+                if analysis_cancel.load(Ordering::Relaxed) {
+                    break;
+                }
                 let result = if analysis_options.no_cache {
                     analyze_scanned_group_with_media(&group, &analysis_media)
                 } else {
@@ -102,6 +119,9 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
                     )
                 }
                 .map_err(|error| error.to_string());
+                if analysis_cancel.load(Ordering::Relaxed) {
+                    break;
+                }
                 if analysis_tx
                     .send(PipelineMessage::GroupAnalysisReady { group, result })
                     .is_err()
@@ -118,15 +138,17 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     let scan_config = scan_config.clone();
     let patterns = patterns.clone();
     let scanner_progress = scan_progress;
+    let scanner_cancel = scan_cancel.clone();
     let scanner_thread = match thread::Builder::new()
         .name("deconflict-scanner".into())
         .spawn(move || {
             let mut dispatch_failed = false;
-            let result = perform_scan_with_progress(
+            let result = perform_scan_with_progress_cancel(
                 &scan_roots,
                 &scan_config,
                 &patterns,
                 scanner_progress,
+                &scanner_cancel,
                 |group| {
                     dispatch_failed |= group_tx.send(group.clone()).is_err();
                 },
@@ -149,11 +171,27 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     drop(message_tx);
 
     let mut state = InteractiveState::default();
-    collect_interactive_results(&message_rx, &mut state, options, &prompt_progress);
+    collect_interactive_results(
+        &message_rx,
+        &mut state,
+        options,
+        &InteractiveContext {
+            progress: &prompt_progress,
+            cancel: &scan_cancel,
+            config,
+            external_tools,
+            media,
+        },
+    );
     let scanner_join = scanner_thread.join();
     let analysis_join = analysis_thread.join();
     scanner_join.map_err(|_| "scanner worker panicked".to_string())?;
     analysis_join.map_err(|_| "group analysis worker panicked".to_string())?;
+
+    if state.force_quit {
+        println!("force quit requested; scan cancelled and no choices were applied");
+        return Ok(());
+    }
 
     if let Some(error) = state.worker_error.take() {
         return Err(error);
@@ -277,9 +315,18 @@ struct InteractiveState {
     completed: usize,
     waiting_after_choice: bool,
     quit: bool,
+    force_quit: bool,
     worker_error: Option<String>,
     analysis_error: Option<String>,
     interaction_error: Option<String>,
+}
+
+struct InteractiveContext<'a> {
+    progress: &'a ScanProgress,
+    cancel: &'a AtomicBool,
+    config: &'a Config,
+    external_tools: &'a ExternalTools,
+    media: &'a Tools,
 }
 
 impl InteractiveState {
@@ -311,13 +358,21 @@ impl InteractiveState {
             None => false,
         }
     }
+
+    fn force_quit(&mut self, cancel: &AtomicBool) {
+        self.quit = true;
+        self.force_quit = true;
+        self.decisions.clear();
+        self.waiting_after_choice = false;
+        cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 fn collect_interactive_results(
     receiver: &Receiver<PipelineMessage>,
     state: &mut InteractiveState,
     options: InteractiveOptions,
-    progress: &ScanProgress,
+    context: &InteractiveContext<'_>,
 ) {
     let mut last_status = None;
     if options.wait_for_analysis || options.wait_for_scan {
@@ -328,7 +383,7 @@ fn collect_interactive_results(
             receive_and_record(
                 receiver,
                 state,
-                progress,
+                context.progress,
                 &mut last_status,
                 Some(if options.wait_for_analysis {
                     "Waiting for scan and group analysis..."
@@ -348,8 +403,8 @@ fn collect_interactive_results(
                         receiver,
                         state,
                         options,
-                        progress,
                         &mut last_status,
+                        context,
                     );
                     state.scan_result = Some(Ok(scan));
                 }
@@ -361,10 +416,10 @@ fn collect_interactive_results(
         {
             let status = waiting_status(state);
             if let Some(group) =
-                receive_and_record(receiver, state, progress, &mut last_status, status)
+                receive_and_record(receiver, state, context.progress, &mut last_status, status)
             {
                 if !state.quit && !state.scan_failed() {
-                    prompt_ready_group(&group, None, state, progress);
+                    prompt_ready_group(&group, None, state, context);
                 }
             }
         }
@@ -375,7 +430,7 @@ fn collect_interactive_results(
         receive_and_record(
             receiver,
             state,
-            progress,
+            context.progress,
             &mut last_status,
             waiting_status(state),
         );
@@ -387,8 +442,8 @@ fn prompt_sorted_groups(
     receiver: &Receiver<PipelineMessage>,
     state: &mut InteractiveState,
     options: InteractiveOptions,
-    progress: &ScanProgress,
     last_status: &mut Option<String>,
+    context: &InteractiveContext<'_>,
 ) {
     for (index, group) in scan.groups.iter().enumerate() {
         if state.quit {
@@ -401,7 +456,7 @@ fn prompt_sorted_groups(
             receive_and_record(
                 receiver,
                 state,
-                progress,
+                context.progress,
                 last_status,
                 Some("Scan complete; waiting for remaining group analysis..."),
             );
@@ -413,13 +468,13 @@ fn prompt_sorted_groups(
             state.analysis_error = Some(format!("analysis missing for {}", group.base.display()));
             break;
         }
-        prompt_ready_group(group, Some((index + 1, scan.groups.len())), state, progress);
+        prompt_ready_group(group, Some((index + 1, scan.groups.len())), state, context);
     }
     while !state.analysis_finished && state.worker_error.is_none() {
         receive_and_record(
             receiver,
             state,
-            progress,
+            context.progress,
             last_status,
             Some(if options.wait_for_analysis {
                 "Waiting for all group analyses..."
@@ -482,49 +537,74 @@ fn prompt_ready_group(
     group: &Group,
     position: Option<(usize, usize)>,
     state: &mut InteractiveState,
-    progress: &ScanProgress,
+    context: &InteractiveContext<'_>,
 ) {
     if state.quit || state.interaction_error.is_some() {
         return;
     }
-    let Some(result) = state.analyses.get(&group.base) else {
-        state.analysis_error = Some(format!("analysis missing for {}", group.base.display()));
-        return;
-    };
-    let stamped = match result {
-        Ok(stamped) => stamped,
-        Err(error) => {
-            state.analysis_error = Some(format!(
-                "analysis failed for {}: {error}",
-                group.base.display()
-            ));
-            eprintln!("{}", state.analysis_error.as_deref().unwrap_or_default());
-            state.quit = true;
+    loop {
+        let Some(result) = state.analyses.get(&group.base) else {
+            state.analysis_error = Some(format!("analysis missing for {}", group.base.display()));
             return;
-        }
-    };
-    let report = group_report(group, &stamped.analysis, position);
-    let choice = progress.suspend(|| {
-        println!("{}", report.text);
-        prompt_choice(&stamped.analysis, report.recommendation.as_ref())
-    });
-    match choice {
-        Ok(PromptChoice::Resolve(decision)) => {
-            state.decisions.insert(group.base.clone(), decision);
-            state.completed += 1;
-            state.waiting_after_choice = position.is_none();
-        }
-        Ok(PromptChoice::Skip) => {
-            state.skipped += 1;
-            state.completed += 1;
-            state.waiting_after_choice = position.is_none();
-        }
-        Ok(PromptChoice::Quit) => {
-            state.quit = true;
-        }
-        Err(error) => {
-            state.interaction_error = Some(error);
-            state.quit = true;
+        };
+        let stamped = match result {
+            Ok(stamped) => stamped,
+            Err(error) => {
+                state.analysis_error = Some(format!(
+                    "analysis failed for {}: {error}",
+                    group.base.display()
+                ));
+                eprintln!("{}", state.analysis_error.as_deref().unwrap_or_default());
+                state.quit = true;
+                return;
+            }
+        };
+        let report = group_report(group, &stamped.analysis, position);
+        let choice = context.progress.suspend(|| {
+            println!("{}", report.text);
+            prompt_choice(&stamped.analysis, context.config, context.external_tools)
+        });
+        match choice {
+            Ok(PromptChoice::Resolve(decision)) => {
+                state.decisions.insert(group.base.clone(), decision);
+                state.completed += 1;
+                state.waiting_after_choice = position.is_none();
+                return;
+            }
+            Ok(PromptChoice::Skip) => {
+                state.skipped += 1;
+                state.completed += 1;
+                state.waiting_after_choice = position.is_none();
+                return;
+            }
+            Ok(PromptChoice::Quit) => {
+                state.quit = true;
+                return;
+            }
+            Ok(PromptChoice::ForceQuit) => {
+                state.force_quit(context.cancel);
+                return;
+            }
+            Ok(PromptChoice::Review) => {
+                match analyze_scanned_group_with_media(group, context.media) {
+                    Ok(analysis) => {
+                        state.analyses.insert(group.base.clone(), Ok(analysis));
+                    }
+                    Err(error) => {
+                        state.analysis_error = Some(format!(
+                            "analysis failed for {} after tool action: {error}",
+                            group.base.display()
+                        ));
+                        state.quit = true;
+                        return;
+                    }
+                }
+            }
+            Err(error) => {
+                state.interaction_error = Some(error);
+                state.quit = true;
+                return;
+            }
         }
     }
 }
@@ -537,7 +617,15 @@ fn waiting_status(state: &InteractiveState) -> Option<&'static str> {
     if state.waiting_after_choice {
         return Some("Choice recorded; waiting for the next stable group...");
     }
-    if state.quit {
+    if state.force_quit {
+        if state.scan_result.is_none() {
+            Some("Force quit requested; stopping the scan...")
+        } else if has_pending_group_analysis(state) {
+            Some("Stopping pending group analysis...")
+        } else {
+            None
+        }
+    } else if state.quit {
         if state.scan_result.is_none() {
             Some("Quit requested; finishing the scan to preserve recorded choices...")
         } else if has_pending_group_analysis(state) {
@@ -646,5 +734,20 @@ mod tests {
             waiting_status(&state),
             Some("Scan complete; waiting for remaining group analysis...")
         );
+    }
+
+    #[test]
+    fn force_quit_cancels_scan_and_discards_recorded_choices() {
+        let cancel = AtomicBool::new(false);
+        let mut state = InteractiveState::default();
+        state
+            .decisions
+            .insert(PathBuf::from("base"), Decision::KeepBase);
+
+        state.force_quit(&cancel);
+
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(state.force_quit);
+        assert!(state.decisions.is_empty());
     }
 }

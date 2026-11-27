@@ -177,6 +177,59 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
     assert!(!cache_dir.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn interactive_edit_reanalyzes_the_group_before_accepting_a_choice() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("scan");
+    let config = temp.path().join("config.toml");
+    let editor = temp.path().join("edit-copy.sh");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("file.txt"), "same\n").unwrap();
+    fs::write(root.join("file.txt.pacnew"), "different\n").unwrap();
+    fs::write(&editor, "#!/bin/sh\nprintf 'same\\n' > \"$1\"\n").unwrap();
+    fs::set_permissions(&editor, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        &config,
+        format!(
+            "[general]\ncache_dir = {:?}\n[tools]\neditor = {:?}\n",
+            temp.path().join("cache").to_string_lossy(),
+            editor.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+        .arg("--config")
+        .arg(&config)
+        .arg("resolve")
+        .arg("--no-cache")
+        .arg("--dry-run")
+        .arg(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"e\n\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("files differ in content"));
+    assert!(stdout.contains("all files identical in content"));
+    assert_eq!(
+        fs::read_to_string(root.join("file.txt.pacnew")).unwrap(),
+        "same\n"
+    );
+}
+
 #[test]
 fn wait_modes_show_final_group_positions() {
     for (wait_option, mode) in [
@@ -321,4 +374,52 @@ fn interactive_resolve_can_skip_and_quit() {
             b"copy"
         );
     }
+}
+
+#[test]
+fn interactive_force_quit_does_not_resolve_or_save_scan_estimate() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("scan");
+    let cache_dir = temp.path().join("cache");
+    let backup_dir = temp.path().join("backup");
+    let config = temp.path().join("config.toml");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("file"), b"base").unwrap();
+    fs::write(root.join("file.pacnew"), b"copy").unwrap();
+    fs::write(
+        &config,
+        format!(
+            "[general]\ncache_dir = {:?}\nbackup_dir = {:?}\n",
+            cache_dir.to_string_lossy(),
+            backup_dir.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_deconflict"))
+        .arg("--config")
+        .arg(&config)
+        .arg("resolve")
+        .arg("--wait-for-scan")
+        .arg(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"Q\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("force quit requested"), "{stdout}");
+    assert!(root.join("file").exists());
+    assert!(root.join("file.pacnew").exists());
+    assert!(!backup_dir.exists());
+    let key = cache_key([&root]).unwrap();
+    assert!(!cache_dir.join(format!("{key}.count")).exists());
 }

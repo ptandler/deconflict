@@ -1,74 +1,208 @@
 use console::style;
 use deconflict_core::{
-    analysis::{recommendation_label, GroupAnalysis, Recommendation},
-    resolve::Decision,
+    actions::{self, ActionDescriptor, ActionKind, ToolCommand},
+    analysis::GroupAnalysis,
+    config::Config,
+    tools::{ToolMode, Tools},
 };
-use std::io::{self, BufRead, Write};
+use std::{
+    io::{self, BufRead, Write},
+    process::Command,
+};
 
 pub(super) enum PromptChoice {
-    Resolve(Decision),
+    Resolve(deconflict_core::resolve::Decision),
     Skip,
     Quit,
+    ForceQuit,
+    Review,
 }
 
 pub(super) fn prompt_choice(
     analysis: &GroupAnalysis,
-    recommendation: Option<&Recommendation>,
+    config: &Config,
+    tools: &Tools,
 ) -> Result<PromptChoice, String> {
-    let default = recommendation
-        .and_then(|choice| recommendation_label(analysis, choice))
-        .map(|label| format!("(Enter) {label} "));
+    let actions = actions::actions_for(analysis, config, tools);
     loop {
-        let mut choices = Vec::new();
-        if let Some(default) = &default {
-            choices.push(style(default).cyan().bold().to_string());
+        let mut resolution = Vec::new();
+        let mut inspect = Vec::new();
+        for action in &actions {
+            let label = format!("({}) {}", action.key, action.label);
+            let label = if action.key == "Enter" {
+                style(label).cyan().bold().to_string()
+            } else {
+                label
+            };
+            if matches!(
+                &action.kind,
+                ActionKind::Resolve(_)
+                    | ActionKind::Skip
+                    | ActionKind::Quit
+                    | ActionKind::ForceQuit
+            ) {
+                resolution.push(label);
+            } else {
+                inspect.push(label);
+            }
         }
-        if analysis.base.is_some() {
-            choices.push("(0) keep base".into());
+        println!("Available actions:");
+        println!("  resolve: {}", resolution.join("  "));
+        if !inspect.is_empty() {
+            println!("  inspect: {}", inspect.join("  "));
         }
-        choices.extend(
-            analysis
-                .copies
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("({}) keep copy #{}", index + 1, index + 1)),
-        );
-        choices.extend(["(h) keep both".into(), "(s) skip".into(), "(q) quit".into()]);
-        print!("{}: ", choices.join(" "));
+        print!("Choice: ");
         io::stdout()
             .flush()
-            .map_err(|e| format!("cannot flush prompt: {e}"))?;
+            .map_err(|error| format!("cannot flush prompt: {error}"))?;
 
         let mut answer = String::new();
         let bytes = io::stdin()
             .lock()
             .read_line(&mut answer)
-            .map_err(|e| format!("cannot read choice: {e}"))?;
+            .map_err(|error| format!("cannot read choice: {error}"))?;
         if bytes == 0 {
             return Err("stdin closed before a resolution choice".into());
         }
-        let answer = answer.trim().to_lowercase();
-        if answer.is_empty() {
-            if let Some(recommendation) = recommendation {
-                return Ok(PromptChoice::Resolve(match recommendation {
-                    Recommendation::Base => Decision::KeepBase,
-                    Recommendation::Copy(index) => Decision::KeepCopy(*index),
-                }));
+        let answer = answer.trim();
+        if let Some(choice) = parse_quit_choice(answer) {
+            return Ok(choice);
+        }
+        let selected = actions.iter().find(|action| {
+            if action.key == "Enter" {
+                answer.is_empty()
+            } else {
+                action.key.eq_ignore_ascii_case(answer)
+            }
+        });
+        let Some(selected) = selected else {
+            println!("invalid choice");
+            continue;
+        };
+        match &selected.kind {
+            ActionKind::Resolve(decision) => return Ok(PromptChoice::Resolve(*decision)),
+            ActionKind::Skip => return Ok(PromptChoice::Skip),
+            ActionKind::Quit => return Ok(PromptChoice::Quit),
+            ActionKind::ForceQuit => return Ok(PromptChoice::ForceQuit),
+            ActionKind::TextDiff => match actions::text_diff(analysis) {
+                Ok(diff) => print!("{diff}"),
+                Err(error) => eprintln!("text diff failed: {error}"),
+            },
+            ActionKind::Config => print_config(analysis, config, tools),
+            ActionKind::Tool { .. } => {
+                run_tool_action(analysis, selected, tools);
+                return Ok(PromptChoice::Review);
             }
         }
-        match answer.as_str() {
-            "q" | "quit" | "exit" => return Ok(PromptChoice::Quit),
-            "s" | "skip" => return Ok(PromptChoice::Skip),
-            "h" | "keep-both" => return Ok(PromptChoice::Resolve(Decision::KeepBoth)),
-            "0" if analysis.base.is_some() => return Ok(PromptChoice::Resolve(Decision::KeepBase)),
-            value => {
-                if let Ok(copy_index) = value.parse::<usize>() {
-                    if copy_index > 0 && copy_index <= analysis.copies.len() {
-                        return Ok(PromptChoice::Resolve(Decision::KeepCopy(copy_index - 1)));
-                    }
-                }
-                println!("invalid choice");
+    }
+}
+
+fn parse_quit_choice(answer: &str) -> Option<PromptChoice> {
+    if answer == "Q" {
+        Some(PromptChoice::ForceQuit)
+    } else if matches!(answer.to_ascii_lowercase().as_str(), "q" | "quit" | "exit") {
+        Some(PromptChoice::Quit)
+    } else {
+        None
+    }
+}
+
+fn print_config(analysis: &GroupAnalysis, config: &Config, tools: &Tools) {
+    println!("[file type: {}]", analysis.kind);
+    print_config_entry("file_types", &config.file_types, &analysis.kind);
+    print_config_entry("file_types_edit", &config.file_types_edit, &analysis.kind);
+    for tool_name in actions::tool_names_for_kind(&analysis.kind, config) {
+        if let Some(path) = tools.get(&tool_name) {
+            println!(
+                "{tool_name} = {} ({})",
+                path.display(),
+                mode_name(tools.mode(&tool_name))
+            );
+        } else {
+            println!("{tool_name} = (not found)");
+        }
+    }
+}
+
+fn print_config_entry(name: &str, table: &toml::Table, kind: &str) {
+    match table.get(kind).and_then(toml::Value::as_str) {
+        Some(value) => println!("[{name}] {kind} = {value:?}"),
+        None => println!("[{name}] {kind} = (built-in default)"),
+    }
+}
+
+fn run_tool_action(analysis: &GroupAnalysis, action: &ActionDescriptor, tools: &Tools) {
+    let commands = match actions::commands_for(analysis, action, tools) {
+        Ok(commands) => commands,
+        Err(error) => {
+            eprintln!("cannot prepare tool action: {error}");
+            return;
+        }
+    };
+    if commands.is_empty() {
+        eprintln!("no matching file is available for this action");
+        return;
+    }
+    let mut gui_processes = Vec::new();
+    for command in commands {
+        println!(
+            "launching ({}): {}",
+            mode_name(command.mode),
+            display_command(&command)
+        );
+        if command.mode == ToolMode::Gui {
+            match Command::new(&command.program).args(&command.args).spawn() {
+                Ok(child) => gui_processes.push((command.program, child)),
+                Err(error) => eprintln!("cannot launch {}: {error}", command.program.display()),
+            }
+        } else {
+            match Command::new(&command.program).args(&command.args).status() {
+                Ok(status) if status.success() => {}
+                Ok(status) => eprintln!("tool exited with {status}"),
+                Err(error) => eprintln!("cannot launch {}: {error}", command.program.display()),
             }
         }
+    }
+    for (program, mut child) in gui_processes {
+        match child.wait() {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("tool exited with {status}"),
+            Err(error) => eprintln!("cannot wait for {}: {error}", program.display()),
+        }
+    }
+}
+
+fn display_command(command: &ToolCommand) -> String {
+    std::iter::once(command.program.as_os_str())
+        .chain(command.args.iter().map(std::ffi::OsString::as_os_str))
+        .map(|part| format!("{:?}", part.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn mode_name(mode: ToolMode) -> &'static str {
+    match mode {
+        ToolMode::PlainTerminal => "terminal",
+        ToolMode::Tui => "TUI",
+        ToolMode::Gui => "GUI",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quit_choices_distinguish_waiting_and_forced_quit() {
+        assert!(matches!(parse_quit_choice("q"), Some(PromptChoice::Quit)));
+        assert!(matches!(
+            parse_quit_choice("Q"),
+            Some(PromptChoice::ForceQuit)
+        ));
+        assert!(matches!(
+            parse_quit_choice("QUIT"),
+            Some(PromptChoice::Quit)
+        ));
+        assert!(parse_quit_choice("").is_none());
     }
 }

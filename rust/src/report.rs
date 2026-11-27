@@ -1,6 +1,6 @@
 use console::{measure_text_width, style};
 use deconflict_core::{
-    analysis::{consider, FileInfo, GroupAnalysis, Recommendation},
+    analysis::{consider, FileInfo, GroupAnalysis},
     scan::Group,
 };
 use std::collections::BTreeSet;
@@ -11,7 +11,6 @@ const META_VALUE_LIMIT: usize = 70;
 
 pub(crate) struct GroupReport {
     pub(crate) text: String,
-    pub(crate) recommendation: Option<Recommendation>,
 }
 
 pub(crate) fn group_report(
@@ -62,7 +61,6 @@ pub(crate) fn group_report(
     }
     GroupReport {
         text: lines.join("\n"),
-        recommendation: consideration.recommendation,
     }
 }
 

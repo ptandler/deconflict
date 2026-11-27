@@ -114,15 +114,19 @@ pub(crate) fn general_backup(config: &Config) -> PathBuf {
 }
 
 pub(crate) fn media_tools(config: &Config) -> MediaTools {
-    let overrides = config
-        .tools
-        .iter()
-        .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
-        .collect();
-    let detected = tools::detect(&overrides);
+    let detected = detected_tools(config);
     MediaTools {
         exiftool: detected.get("exiftool").map(Path::to_path_buf),
         video_probe: detected.get("video_probe").map(Path::to_path_buf),
         office_text: detected.get("office_text").map(Path::to_path_buf),
     }
+}
+
+pub(crate) fn detected_tools(config: &Config) -> tools::Tools {
+    let overrides = config
+        .tools
+        .iter()
+        .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
+        .collect();
+    tools::detect(&overrides)
 }

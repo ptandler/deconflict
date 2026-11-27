@@ -28,6 +28,13 @@ pub struct Tools {
     pub found: HashMap<String, PathBuf>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolMode {
+    PlainTerminal,
+    Tui,
+    Gui,
+}
+
 impl Tools {
     pub fn is_empty(&self) -> bool {
         self.found.is_empty()
@@ -35,6 +42,78 @@ impl Tools {
 
     pub fn get(&self, name: &str) -> Option<&Path> {
         self.found.get(name).map(PathBuf::as_path)
+    }
+
+    pub fn available(&self, name: &str) -> bool {
+        let Some(path) = self.get(name) else {
+            return false;
+        };
+        let command = path.to_string_lossy();
+        let has_directory = path.is_absolute()
+            || path
+                .parent()
+                .is_some_and(|parent| !parent.as_os_str().is_empty());
+        if has_directory {
+            executable(path)
+        } else {
+            which(&command).is_some()
+        }
+    }
+
+    pub fn mode(&self, name: &str) -> ToolMode {
+        let executable = self
+            .get(name)
+            .and_then(Path::file_name)
+            .map(|path| path.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let stem = executable.strip_suffix(".exe").unwrap_or(&executable);
+        if matches!(
+            stem,
+            "code"
+                | "codium"
+                | "eog"
+                | "gimp"
+                | "kate"
+                | "kid3"
+                | "libreoffice"
+                | "meld"
+                | "mpv"
+                | "notepad"
+                | "notepad++"
+                | "pinta"
+                | "soffice"
+                | "vlc"
+                | "winmerge"
+                | "winmergeu"
+                | "xdg-open"
+        ) {
+            ToolMode::Gui
+        } else if matches!(
+            stem,
+            "emacsclient"
+                | "fresh"
+                | "helix"
+                | "hx"
+                | "keepassxc-cli"
+                | "micro"
+                | "nano"
+                | "nvim"
+                | "vi"
+                | "vim"
+        ) {
+            ToolMode::Tui
+        } else if matches!(
+            stem,
+            "diff" | "exiftool" | "ffprobe" | "kid3-cli" | "odt2txt" | "pandoc"
+        ) {
+            ToolMode::PlainTerminal
+        } else {
+            match name {
+                "editor" | "keepass" => ToolMode::Tui,
+                "diff" | "exiftool" | "video_probe" | "office_text" => ToolMode::PlainTerminal,
+                _ => ToolMode::Gui,
+            }
+        }
     }
 
     pub fn names(&self) -> &'static [&'static str] {
@@ -272,11 +351,32 @@ mod tests {
     }
 
     #[test]
+    fn availability_and_modes_classify_external_tools() {
+        let tools = Tools {
+            found: HashMap::from([
+                ("editor".into(), PathBuf::from("/custom/fresh")),
+                ("diff".into(), PathBuf::from("/custom/meld")),
+                ("exiftool".into(), PathBuf::from("/custom/exiftool")),
+                ("image_viewer".into(), PathBuf::from("/custom/viewer")),
+            ]),
+        };
+        assert_eq!(tools.mode("editor"), ToolMode::Tui);
+        assert_eq!(tools.mode("diff"), ToolMode::Gui);
+        assert_eq!(tools.mode("exiftool"), ToolMode::PlainTerminal);
+        assert_eq!(tools.mode("image_viewer"), ToolMode::Gui);
+        assert!(!tools.available("diff"));
+    }
+
+    #[test]
     fn which_accepts_real_executable_and_rejects_missing_or_directory() {
         let executable = env::current_exe().unwrap();
         assert_eq!(which(executable.to_str().unwrap()), Some(executable));
         assert_eq!(which(""), None);
         assert_eq!(which("."), None);
         assert_eq!(which("/definitely-missing-deconflict-tool"), None);
+        let tools = Tools {
+            found: HashMap::from([("editor".into(), env::current_exe().unwrap())]),
+        };
+        assert!(tools.available("editor"));
     }
 }

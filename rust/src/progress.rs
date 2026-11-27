@@ -88,6 +88,18 @@ pub(crate) fn perform_scan_with_progress(
     scan_config: &ScanConfig,
     patterns: &Patterns,
     progress: ScanProgress,
+    group_ready: impl FnMut(&Group),
+) -> Result<ScanResult, String> {
+    let cancel = AtomicBool::new(false);
+    perform_scan_with_progress_cancel(roots, scan_config, patterns, progress, &cancel, group_ready)
+}
+
+pub(crate) fn perform_scan_with_progress_cancel(
+    roots: &[PathBuf],
+    scan_config: &ScanConfig,
+    patterns: &Patterns,
+    progress: ScanProgress,
+    cancel: &AtomicBool,
     mut group_ready: impl FnMut(&Group),
 ) -> Result<ScanResult, String> {
     if roots.is_empty() {
@@ -101,84 +113,78 @@ pub(crate) fn perform_scan_with_progress(
     let mut discovery_last_event = None;
     let mut analysis_started = None;
     let mut analysis_last_event = None;
-    let result = scan(
-        roots,
-        scan_config,
-        patterns,
-        &AtomicBool::new(false),
-        |event| match event {
-            Event::File(path) => {
-                file_count += 1;
-                discovery_last_event = Some(Instant::now());
-                if let Some(bar) = &progress.bar {
-                    bar.set_position(file_count as u64);
-                    set_progress_message(
-                        bar,
-                        file_count,
-                        directory_count,
-                        analysis_done,
-                        analysis_queued,
-                        progress.estimated_file_count,
-                        path,
-                    );
-                }
+    let result = scan(roots, scan_config, patterns, cancel, |event| match event {
+        Event::File(path) => {
+            file_count += 1;
+            discovery_last_event = Some(Instant::now());
+            if let Some(bar) = &progress.bar {
+                bar.set_position(file_count as u64);
+                set_progress_message(
+                    bar,
+                    file_count,
+                    directory_count,
+                    analysis_done,
+                    analysis_queued,
+                    progress.estimated_file_count,
+                    path,
+                );
             }
-            Event::Directory(path) => {
-                directory_count += 1;
-                discovery_last_event = Some(Instant::now());
-                if let Some(bar) = &progress.bar {
-                    set_progress_message(
-                        bar,
-                        file_count,
-                        directory_count,
-                        analysis_done,
-                        analysis_queued,
-                        progress.estimated_file_count,
-                        path,
-                    );
-                }
+        }
+        Event::Directory(path) => {
+            directory_count += 1;
+            discovery_last_event = Some(Instant::now());
+            if let Some(bar) = &progress.bar {
+                set_progress_message(
+                    bar,
+                    file_count,
+                    directory_count,
+                    analysis_done,
+                    analysis_queued,
+                    progress.estimated_file_count,
+                    path,
+                );
             }
-            Event::AnalysisQueued(path) => {
-                analysis_queued += 1;
-                analysis_started.get_or_insert_with(Instant::now);
-                if let Some(bar) = &progress.bar {
-                    set_progress_message(
-                        bar,
-                        file_count,
-                        directory_count,
-                        analysis_done,
-                        analysis_queued,
-                        progress.estimated_file_count,
-                        path,
-                    );
-                }
+        }
+        Event::AnalysisQueued(path) => {
+            analysis_queued += 1;
+            analysis_started.get_or_insert_with(Instant::now);
+            if let Some(bar) = &progress.bar {
+                set_progress_message(
+                    bar,
+                    file_count,
+                    directory_count,
+                    analysis_done,
+                    analysis_queued,
+                    progress.estimated_file_count,
+                    path,
+                );
             }
-            Event::Provisional(path, _) => {
-                analysis_done += 1;
-                analysis_last_event = Some(Instant::now());
-                if let Some(bar) = &progress.bar {
-                    set_progress_message(
-                        bar,
-                        file_count,
-                        directory_count,
-                        analysis_done,
-                        analysis_queued,
-                        progress.estimated_file_count,
-                        path,
-                    );
-                }
+        }
+        Event::Provisional(path, _) => {
+            analysis_done += 1;
+            analysis_last_event = Some(Instant::now());
+            if let Some(bar) = &progress.bar {
+                set_progress_message(
+                    bar,
+                    file_count,
+                    directory_count,
+                    analysis_done,
+                    analysis_queued,
+                    progress.estimated_file_count,
+                    path,
+                );
             }
-            Event::Error(path, error) => {
-                if let Some(bar) = &progress.bar {
-                    bar.suspend(|| eprintln!("{}: {error}", path.display()));
-                } else if progress.show_errors {
-                    eprintln!("{}: {error}", path.display());
-                }
+        }
+        Event::Error(path, error) => {
+            if let Some(bar) = &progress.bar {
+                bar.suspend(|| eprintln!("{}: {error}", path.display()));
+            } else if progress.show_errors {
+                eprintln!("{}: {error}", path.display());
             }
-            Event::DirectoryComplete(_) => (),
-            Event::GroupReady(group) => group_ready(group),
-        },
-    )?;
+        }
+        Event::DirectoryComplete(_) => (),
+        Event::GroupReady(group) => group_ready(group),
+    })?;
 
     if let Some(bar) = &progress.bar {
         let total = started.elapsed();
