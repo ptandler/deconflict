@@ -461,7 +461,8 @@ fn tui_file_detail_shows_analysis_findings() {
             (&["(b) keep both", "(q) quit"], b"m"),
             (&["field", "#0note"], b"\t"),
             (&["file detail", "selectacopytocomparewith#0"], b"\x1b[B"),
-            (&["additionsonly", "recommended"], b"\x03"),
+            (&["findings:"], b"\x1b[6;2~"),
+            (&["recommended"], b"\x03"),
         ],
     );
     assert!(contains_text(&output, "findings:"), "output:\n{output}");

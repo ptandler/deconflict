@@ -27,7 +27,6 @@ pub(super) enum Tab {
 }
 
 impl Tab {
-    #[cfg(test)]
     pub(super) const ALL: [Self; 7] = [
         Self::Meta,
         Self::Files,
@@ -37,6 +36,11 @@ impl Tab {
         Self::Errors,
         Self::Help,
     ];
+    pub(super) const COUNT: usize = Self::ALL.len();
+
+    pub(super) fn index(self) -> usize {
+        Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0)
+    }
 
     pub(super) fn title(self) -> &'static str {
         match self {
@@ -63,6 +67,27 @@ impl Tab {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ScrollTarget {
+    #[default]
+    Groups,
+    Detail,
+    FileDetail,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ScrollMeta {
+    pub(super) content: usize,
+    pub(super) viewport: usize,
+    pub(super) track: Option<Rect>,
+}
+
+impl ScrollMeta {
+    pub(super) fn max_offset(&self) -> usize {
+        self.content.saturating_sub(self.viewport)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct App {
     pub(super) split_percent: u16,
@@ -74,12 +99,22 @@ pub(super) struct App {
     pub(super) should_exit: bool,
     pub(super) dragging_split: bool,
     pub(super) show_config: bool,
-    pub(super) group_rows: Vec<Rect>,
-    pub(super) file_rows: Vec<Rect>,
+    pub(super) group_rows: Vec<(Rect, usize)>,
+    pub(super) file_rows: Vec<(Rect, usize)>,
     pub(super) tab_areas: Vec<(Rect, Tab)>,
     pub(super) action_areas: Vec<(Rect, usize)>,
     pub(super) main_area: Rect,
+    pub(super) left_area: Rect,
+    pub(super) right_area: Rect,
+    pub(super) file_detail_area: Rect,
     pub(super) separator_x: u16,
+    pub(super) group_scroll: usize,
+    pub(super) detail_scroll: [usize; Tab::COUNT],
+    pub(super) file_detail_scroll: usize,
+    pub(super) group_scroll_meta: ScrollMeta,
+    pub(super) detail_scroll_meta: ScrollMeta,
+    pub(super) file_detail_meta: ScrollMeta,
+    pub(super) dragging_scrollbar: Option<ScrollTarget>,
     pending_tool: Option<(std::path::PathBuf, Vec<ToolCommand>)>,
     pub(super) diff_text: Option<String>,
     pub(super) last_image_request: Option<(std::path::PathBuf, std::path::PathBuf)>,
@@ -110,11 +145,161 @@ impl App {
                 width: 0,
                 height: 0,
             },
+            left_area: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+            right_area: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+            file_detail_area: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
             separator_x: 0,
+            group_scroll: 0,
+            detail_scroll: [0; Tab::COUNT],
+            file_detail_scroll: 0,
+            group_scroll_meta: ScrollMeta::default(),
+            detail_scroll_meta: ScrollMeta::default(),
+            file_detail_meta: ScrollMeta::default(),
+            dragging_scrollbar: None,
             pending_tool: None,
             diff_text: None,
             last_image_request: None,
             image_area: None,
+        }
+    }
+
+    pub(super) fn detail_offset(&self) -> usize {
+        self.detail_scroll[self.tab.index()]
+    }
+
+    fn detail_offset_mut(&mut self) -> &mut usize {
+        let index = self.tab.index();
+        &mut self.detail_scroll[index]
+    }
+
+    fn scroll_offset_mut(&mut self, target: ScrollTarget) -> &mut usize {
+        match target {
+            ScrollTarget::Groups => &mut self.group_scroll,
+            ScrollTarget::Detail => self.detail_offset_mut(),
+            ScrollTarget::FileDetail => &mut self.file_detail_scroll,
+        }
+    }
+
+    pub(super) fn scroll_meta(&self, target: ScrollTarget) -> ScrollMeta {
+        match target {
+            ScrollTarget::Groups => self.group_scroll_meta,
+            ScrollTarget::Detail => self.detail_scroll_meta,
+            ScrollTarget::FileDetail => self.file_detail_meta,
+        }
+    }
+
+    pub(super) fn set_scroll_meta(&mut self, target: ScrollTarget, meta: ScrollMeta) {
+        match target {
+            ScrollTarget::Groups => self.group_scroll_meta = meta,
+            ScrollTarget::Detail => self.detail_scroll_meta = meta,
+            ScrollTarget::FileDetail => self.file_detail_meta = meta,
+        }
+    }
+
+    pub(super) fn clamp_scroll(&mut self, target: ScrollTarget) {
+        let max = self.scroll_meta(target).max_offset();
+        let offset = self.scroll_offset_mut(target);
+        *offset = (*offset).min(max);
+    }
+
+    pub(super) fn scroll_by(&mut self, target: ScrollTarget, delta: isize) {
+        self.clamp_scroll(target);
+        let offset = self.scroll_offset_mut(target);
+        if delta < 0 {
+            *offset = offset.saturating_sub(delta.unsigned_abs());
+        } else {
+            *offset = offset.saturating_add(delta as usize);
+        }
+        self.clamp_scroll(target);
+    }
+
+    fn keyboard_scroll_target(&self) -> ScrollTarget {
+        if self.tab == Tab::Files && self.file_detail_meta.max_offset() > 0 {
+            ScrollTarget::FileDetail
+        } else {
+            ScrollTarget::Detail
+        }
+    }
+
+    pub(super) fn scroll_page(&mut self, target: ScrollTarget, direction: isize) {
+        let page = self.scroll_meta(target).viewport.max(1) as isize;
+        self.scroll_by(target, direction.saturating_mul(page));
+    }
+
+    pub(super) fn scroll_to_point(&mut self, target: ScrollTarget, point: Position) {
+        let meta = self.scroll_meta(target);
+        let Some(track) = meta.track else {
+            return;
+        };
+        if track.height == 0 {
+            return;
+        }
+        let row = point.y.saturating_sub(track.y).min(track.height - 1) as usize;
+        let denom = track.height.saturating_sub(1).max(1) as usize;
+        let wanted = row.saturating_mul(meta.max_offset()).div_ceil(denom);
+        let offset = self.scroll_offset_mut(target);
+        *offset = wanted.min(meta.max_offset());
+    }
+
+    pub(super) fn scroll_target_at(&self, point: Position) -> Option<ScrollTarget> {
+        if self
+            .group_scroll_meta
+            .track
+            .is_some_and(|rect| rect.contains(point))
+        {
+            return Some(ScrollTarget::Groups);
+        }
+        if self
+            .file_detail_meta
+            .track
+            .is_some_and(|rect| rect.contains(point))
+        {
+            return Some(ScrollTarget::FileDetail);
+        }
+        if self
+            .detail_scroll_meta
+            .track
+            .is_some_and(|rect| rect.contains(point))
+        {
+            return Some(ScrollTarget::Detail);
+        }
+        None
+    }
+
+    fn ensure_group_visible(&mut self, index: usize) {
+        let viewport = self.group_scroll_meta.viewport.max(1);
+        if index < self.group_scroll {
+            self.group_scroll = index;
+        } else if index >= self.group_scroll.saturating_add(viewport) {
+            self.group_scroll = index + 1 - viewport;
+        }
+    }
+
+    fn ensure_file_visible(&mut self, index: usize) {
+        if self.tab != Tab::Files {
+            return;
+        }
+        let viewport = self.detail_scroll_meta.viewport.max(1);
+        let offset = self.detail_offset();
+        if index < offset {
+            *self.detail_offset_mut() = index;
+        } else if index >= offset.saturating_add(viewport) {
+            *self.detail_offset_mut() = index + 1 - viewport;
         }
     }
 
@@ -215,6 +400,9 @@ impl App {
         self.selected_file = 0;
         self.show_config = false;
         self.diff_text = None;
+        self.file_detail_scroll = 0;
+        self.detail_scroll.fill(0);
+        self.ensure_group_visible(index);
         self.push_log(format!(
             "conflict {}: {}",
             index + 1,
@@ -236,6 +424,50 @@ impl App {
             }
         }
         self.push_log("all conflicts decided");
+    }
+
+    fn file_count(&self, session: &Session) -> usize {
+        self.selected_entry(session)
+            .and_then(|entry| entry.analysis.as_ref())
+            .and_then(|result| result.as_ref().ok())
+            .map(|stamped| stamped.analysis.base.is_some() as usize + stamped.analysis.copies.len())
+            .unwrap_or(0)
+    }
+
+    fn select_file(&mut self, index: usize, session: &Session) {
+        let files = self.file_count(session);
+        if files == 0 || index >= files {
+            return;
+        }
+        self.selected_file = index;
+        self.file_detail_scroll = 0;
+        self.ensure_file_visible(index);
+    }
+
+    fn page_conflicts(&mut self, direction: isize, session: &Session) {
+        if session.groups.is_empty() {
+            return;
+        }
+        let count = session.groups.len() as isize;
+        let page = self.group_scroll_meta.viewport.max(1) as isize;
+        let target = (self.selected_group as isize + direction.saturating_mul(page))
+            .clamp(0, count - 1) as usize;
+        let mut index = target as isize;
+        for _ in 0..count {
+            if index >= 0 && index < count && !session.groups[index as usize].is_decided() {
+                self.select_group(index as usize, session);
+                return;
+            }
+            index += direction;
+        }
+        index = self.selected_group as isize;
+        for _ in 0..count {
+            if index >= 0 && index < count && !session.groups[index as usize].is_decided() {
+                self.select_group(index as usize, session);
+                return;
+            }
+            index -= direction;
+        }
     }
 
     pub(super) fn visible_tabs(&self, session: &Session) -> Vec<Tab> {
@@ -338,8 +570,33 @@ impl App {
                     self.advance(1, session);
                     return Ok(());
                 }
+                KeyCode::PageUp => {
+                    self.page_conflicts(-1, session);
+                    return Ok(());
+                }
+                KeyCode::PageDown => {
+                    self.page_conflicts(1, session);
+                    return Ok(());
+                }
                 _ => {}
             }
+        }
+
+        if key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(
+                key.code,
+                KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+            )
+        {
+            let target = self.keyboard_scroll_target();
+            match key.code {
+                KeyCode::Up => self.scroll_by(target, -1),
+                KeyCode::Down => self.scroll_by(target, 1),
+                KeyCode::PageUp => self.scroll_page(target, -1),
+                KeyCode::PageDown => self.scroll_page(target, 1),
+                _ => {}
+            }
+            return Ok(());
         }
 
         match key.code {
@@ -379,7 +636,7 @@ impl App {
             }
             KeyCode::Up => {
                 if self.tab == Tab::Files {
-                    self.selected_file = self.selected_file.saturating_sub(1);
+                    self.select_file(self.selected_file.saturating_sub(1), session);
                 } else {
                     self.advance(-1, session);
                 }
@@ -387,20 +644,18 @@ impl App {
             }
             KeyCode::Down => {
                 if self.tab == Tab::Files {
-                    let files = self
-                        .selected_entry(session)
-                        .and_then(|entry| entry.analysis.as_ref())
-                        .and_then(|result| result.as_ref().ok())
-                        .map(|stamped| {
-                            stamped.analysis.base.is_some() as usize + stamped.analysis.copies.len()
-                        })
-                        .unwrap_or(0);
-                    if files > 0 {
-                        self.selected_file = self.selected_file.saturating_add(1).min(files - 1);
-                    }
+                    self.select_file(self.selected_file.saturating_add(1), session);
                 } else {
                     self.advance(1, session);
                 }
+                return Ok(());
+            }
+            KeyCode::PageUp => {
+                self.page_conflicts(-1, session);
+                return Ok(());
+            }
+            KeyCode::PageDown => {
+                self.page_conflicts(1, session);
                 return Ok(());
             }
             KeyCode::Home => {
@@ -437,6 +692,11 @@ impl App {
         let point = Position::new(mouse.column, mouse.row);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(target) = self.scroll_target_at(point) {
+                    self.dragging_scrollbar = Some(target);
+                    self.scroll_to_point(target, point);
+                    return Ok(());
+                }
                 if self.main_area.contains(point)
                     && point.x + 1 >= self.separator_x
                     && point.x <= self.separator_x + 1
@@ -454,14 +714,23 @@ impl App {
                     self.show_config = false;
                     return Ok(());
                 }
-                if let Some(index) = self.group_rows.iter().position(|rect| rect.contains(point)) {
+                if let Some(index) = self
+                    .group_rows
+                    .iter()
+                    .find(|(rect, _)| rect.contains(point))
+                    .map(|(_, index)| *index)
+                {
                     self.select_group(index, session);
                     return Ok(());
                 }
                 if self.tab == Tab::Files {
-                    if let Some(index) = self.file_rows.iter().position(|rect| rect.contains(point))
+                    if let Some(index) = self
+                        .file_rows
+                        .iter()
+                        .find(|(rect, _)| rect.contains(point))
+                        .map(|(_, index)| *index)
                     {
-                        self.selected_file = index;
+                        self.select_file(index, session);
                         return Ok(());
                     }
                 }
@@ -477,10 +746,36 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::Drag(MouseButton::Left) if self.dragging_split => {
-                self.split_percent = split_percent(point.x, self.main_area);
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let target = if let Some(target) = self.scroll_target_at(point) {
+                    target
+                } else if self.left_area.contains(point) {
+                    ScrollTarget::Groups
+                } else if self.tab == Tab::Files && self.file_detail_area.contains(point) {
+                    ScrollTarget::FileDetail
+                } else if self.right_area.contains(point) {
+                    ScrollTarget::Detail
+                } else {
+                    return Ok(());
+                };
+                let delta = if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                    -1
+                } else {
+                    1
+                };
+                self.scroll_by(target, delta);
             }
-            MouseEventKind::Up(MouseButton::Left) => self.dragging_split = false,
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.dragging_split {
+                    self.split_percent = split_percent(point.x, self.main_area);
+                } else if let Some(target) = self.dragging_scrollbar {
+                    self.scroll_to_point(target, point);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.dragging_split = false;
+                self.dragging_scrollbar = None;
+            }
             _ => {}
         }
         Ok(())
@@ -714,6 +1009,52 @@ mod tests {
         app.tab = Tab::Files;
         app.auto_focus_first_group(2);
         assert_eq!(app.tab, Tab::Files);
+    }
+
+    #[test]
+    fn scroll_offsets_clamp_to_content() {
+        let mut app = App::new();
+        app.tab = Tab::Log;
+        app.set_scroll_meta(
+            ScrollTarget::Detail,
+            ScrollMeta {
+                content: 100,
+                viewport: 10,
+                track: None,
+            },
+        );
+        app.scroll_by(ScrollTarget::Detail, 5);
+        assert_eq!(app.detail_offset(), 5);
+        app.scroll_page(ScrollTarget::Detail, 1);
+        assert_eq!(app.detail_offset(), 15);
+        app.scroll_by(ScrollTarget::Detail, 1000);
+        assert_eq!(app.detail_offset(), 90);
+        app.scroll_page(ScrollTarget::Detail, -1);
+        assert_eq!(app.detail_offset(), 80);
+    }
+
+    #[test]
+    fn scrollbar_drag_maps_track_position() {
+        let mut app = App::new();
+        app.set_scroll_meta(
+            ScrollTarget::Groups,
+            ScrollMeta {
+                content: 100,
+                viewport: 10,
+                track: Some(Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 10,
+                }),
+            },
+        );
+        app.scroll_to_point(ScrollTarget::Groups, Position::new(0, 5));
+        assert_eq!(app.group_scroll, 50);
+        app.scroll_to_point(ScrollTarget::Groups, Position::new(0, 99));
+        assert_eq!(app.group_scroll, 90);
+        app.scroll_to_point(ScrollTarget::Groups, Position::new(0, 0));
+        assert_eq!(app.group_scroll, 0);
     }
 
     #[test]

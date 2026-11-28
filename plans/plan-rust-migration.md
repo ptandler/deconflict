@@ -322,7 +322,14 @@ Status: Ratatui frontend is implemented on the existing scanner/analysis/resolve
   - Added `file_type_actions` unit coverage.
   - Validation: fmt, clippy, all Rust tests (78 lib + 31 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY) green.
 
-**Architecture principles:**
+**Pane scrolling — done**
+- User feedback recorded 2026-11-28:
+  - Conflict list and right-pane tabs now render a ratatui scrollbar whenever content exceeds the viewport.
+  - Mouse wheel scrolls the pane under the pointer; scrollbar drag maps track position to scroll offset.
+  - Shift+Up/Down and Shift+PageUp/PageDown scroll the right pane; in `files`, overflowing file detail wins over the file table.
+  - PageUp/PageDown and Ctrl+PageUp/PageDown page the conflict list; Ctrl+Up/Down still select conflicts.
+  - File detail findings are one per line and text preview cap is 200 scrollable lines.
+  - Validation: fmt, clippy, all Rust tests (78 lib + 35 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY) green.
 - `main.rs` is process startup and dispatch only.
 - Core modules remain UI-free and reusable.
 - Config, commands and progress are separate concerns with explicit interfaces.

@@ -1,7 +1,7 @@
 //! Ratatui rendering. No filesystem mutation or terminal I/O happens here.
 
 use super::{
-    app::{App, Tab},
+    app::{App, ScrollMeta, ScrollTarget, Tab},
     images,
     session::Session,
 };
@@ -20,7 +20,10 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs},
+    widgets::{
+        Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, Tabs, Wrap,
+    },
     Frame,
 };
 use std::io::{BufRead, BufReader};
@@ -263,6 +266,8 @@ pub(super) fn draw(
     ])
     .split(app.main_area);
     app.separator_x = columns[1].x;
+    app.left_area = columns[0];
+    app.right_area = columns[2];
     draw_groups(frame, app, session, columns[0]);
     frame.render_widget(
         Paragraph::new("│").style(Style::default().fg(accent())),
@@ -287,65 +292,180 @@ fn marker(app: &App, session: &Session, index: usize) -> &'static str {
     }
 }
 
+fn wrapped_height(lines: &[Line<'_>], width: u16) -> usize {
+    let width = width.max(1) as usize;
+    lines
+        .iter()
+        .map(|line| {
+            let line_width = line.width();
+            if line_width == 0 {
+                1
+            } else {
+                line_width.div_ceil(width)
+            }
+        })
+        .sum()
+}
+
+fn scroll_offset(app: &App, target: ScrollTarget) -> usize {
+    match target {
+        ScrollTarget::Groups => app.group_scroll,
+        ScrollTarget::Detail => app.detail_offset(),
+        ScrollTarget::FileDetail => app.file_detail_scroll,
+    }
+}
+
+fn draw_scrollbar(
+    frame: &mut Frame,
+    app: &mut App,
+    target: ScrollTarget,
+    outer: Rect,
+    content: usize,
+    viewport: usize,
+) {
+    app.clamp_scroll(target);
+    let track = (content > viewport && outer.width > 0 && outer.height > 0).then(|| Rect {
+        x: outer.right() - 1,
+        y: outer.y,
+        width: 1,
+        height: outer.height,
+    });
+    let offset = scroll_offset(app, target);
+    app.set_scroll_meta(
+        target,
+        ScrollMeta {
+            content,
+            viewport,
+            track,
+        },
+    );
+    if let Some(track) = track {
+        let mut state = ScrollbarState::new(content)
+            .position(offset)
+            .viewport_content_length(viewport);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None),
+            track,
+            &mut state,
+        );
+    }
+}
+
+fn render_scrolled_lines(
+    frame: &mut Frame,
+    app: &mut App,
+    target: ScrollTarget,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line<'static>>,
+    wrap: bool,
+) {
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let outer = block.inner(area);
+    frame.render_widget(block, area);
+    let viewport = outer.height as usize;
+    let full_content = wrapped_height(&lines, outer.width);
+    let content = if full_content > viewport {
+        wrapped_height(&lines, outer.width.saturating_sub(1))
+    } else {
+        full_content
+    };
+    let visible = content > viewport;
+    let content_area = if visible {
+        Rect {
+            width: outer.width.saturating_sub(1),
+            ..outer
+        }
+    } else {
+        outer
+    };
+    draw_scrollbar(frame, app, target, outer, content, viewport);
+    let offset = scroll_offset(app, target).min(u16::MAX as usize) as u16;
+    let paragraph = Paragraph::new(lines).scroll((offset, 0));
+    let paragraph = if wrap {
+        paragraph.wrap(Wrap { trim: false })
+    } else {
+        paragraph
+    };
+    frame.render_widget(paragraph, content_area);
+}
+
 fn draw_groups(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
     let block = Block::default()
         .borders(Borders::RIGHT)
         .title(" conflicts ");
-    let inner = block.inner(area);
+    let outer = block.inner(area);
     frame.render_widget(block, area);
+    let content = session.groups.len().max(1);
+    let viewport = outer.height as usize;
+    let visible = content > viewport;
+    let inner = if visible {
+        Rect {
+            width: outer.width.saturating_sub(1),
+            ..outer
+        }
+    } else {
+        outer
+    };
+    draw_scrollbar(frame, app, ScrollTarget::Groups, outer, content, viewport);
 
     let mut rows = Vec::new();
     let mut rects = Vec::new();
-    for (index, entry) in session.groups.iter().enumerate() {
-        if index as u16 >= inner.height {
-            break;
-        }
-        let selected = app.selected_group == index;
-        let style = if selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(accent())
-                .add_modifier(Modifier::BOLD)
-        } else if entry.is_decided() {
-            Style::default().fg(good())
-        } else {
-            Style::default()
-        };
-        let state = if entry.analysis.is_none() {
-            "…"
-        } else if entry.skipped {
-            "skipped"
-        } else {
-            entry.pattern.as_str()
-        };
-        let file_count = entry.group.conflicts.len() + 1;
-        let label = if file_count > 2 {
-            format!("{} ({}x)", entry.label, file_count)
-        } else {
-            entry.label.clone()
-        };
-        rows.push(Line::from(vec![
-            Span::styled(marker(app, session, index), style),
-            Span::raw(" "),
-            Span::styled(
-                truncate(&label, inner.width.saturating_sub(14) as usize),
-                style,
-            ),
-            Span::styled(format!("  {state}"), style),
-        ]));
-        rects.push(Rect {
-            x: inner.x,
-            y: inner.y + index as u16,
-            width: inner.width,
-            height: 1,
-        });
-    }
-    if rows.is_empty() {
+    if session.groups.is_empty() {
         rows.push(Line::from(if session.scan_complete() {
             "no conflicts found"
         } else {
             "scanning for conflicts…"
         }));
+    } else {
+        let offset = app.group_scroll;
+        for (local, index) in (offset..content).take(inner.height as usize).enumerate() {
+            let entry = &session.groups[index];
+            let selected = app.selected_group == index;
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(accent())
+                    .add_modifier(Modifier::BOLD)
+            } else if entry.is_decided() {
+                Style::default().fg(good())
+            } else {
+                Style::default()
+            };
+            let state = if entry.analysis.is_none() {
+                "…"
+            } else if entry.skipped {
+                "skipped"
+            } else {
+                entry.pattern.as_str()
+            };
+            let file_count = entry.group.conflicts.len() + 1;
+            let label = if file_count > 2 {
+                format!("{} ({}x)", entry.label, file_count)
+            } else {
+                entry.label.clone()
+            };
+            rows.push(Line::from(vec![
+                Span::styled(marker(app, session, index), style),
+                Span::raw(" "),
+                Span::styled(
+                    truncate(&label, inner.width.saturating_sub(14) as usize),
+                    style,
+                ),
+                Span::styled(format!("  {state}"), style),
+            ]));
+            rects.push((
+                Rect {
+                    x: inner.x,
+                    y: inner.y + local as u16,
+                    width: inner.width,
+                    height: 1,
+                },
+                index,
+            ));
+        }
     }
     app.group_rows = rects;
     frame.render_widget(Paragraph::new(rows), inner);
@@ -406,8 +526,8 @@ fn draw_group_detail(
     match app.tab {
         Tab::Meta => draw_meta(frame, app, session, vertical[1]),
         Tab::Files => draw_files(frame, app, session, vertical[1]),
-        Tab::Errors => draw_errors(frame, session, vertical[1]),
-        Tab::Help => draw_help(frame, vertical[1]),
+        Tab::Errors => draw_errors(frame, app, session, vertical[1]),
+        Tab::Help => draw_help(frame, app, vertical[1]),
         Tab::Images => {
             let block = Block::default().borders(Borders::ALL).title(" images ");
             let inner = block.inner(vertical[1]);
@@ -418,15 +538,9 @@ fn draw_group_detail(
             } else {
                 "inline images require a kitty terminal; use (v) to open the file externally"
             };
-            frame.render_widget(
-                Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: false }),
-                inner,
-            );
+            frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), inner);
         }
         Tab::Diff | Tab::Log => {
-            let block = Block::default().borders(Borders::ALL);
-            let inner = block.inner(vertical[1]);
-            frame.render_widget(block, vertical[1]);
             let text = if app.tab == Tab::Log {
                 app.log.join("\n")
             } else if app.show_config {
@@ -436,9 +550,19 @@ fn draw_group_detail(
                     .clone()
                     .unwrap_or_else(|| "press (d)iff for a text diff".into())
             };
-            frame.render_widget(
-                Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: false }),
-                inner,
+            let lines = text
+                .lines()
+                .map(|line| Line::from(line.to_string()))
+                .collect::<Vec<_>>();
+            let title = format!(" {} ", app.tab.title());
+            render_scrolled_lines(
+                frame,
+                app,
+                ScrollTarget::Detail,
+                vertical[1],
+                &title,
+                lines,
+                true,
             );
         }
     }
@@ -469,12 +593,17 @@ fn tab_rects(area: Rect, tabs: &[Tab], label_width: usize) -> Vec<(Rect, Tab)> {
         .collect()
 }
 
-fn draw_meta(frame: &mut Frame, app: &App, session: &Session, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title(" metadata ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+fn draw_meta(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
     let Some(entry) = app.selected_entry(session) else {
-        frame.render_widget(Paragraph::new("no conflict selected"), inner);
+        render_scrolled_lines(
+            frame,
+            app,
+            ScrollTarget::Detail,
+            area,
+            " metadata ",
+            vec![Line::from("no conflict selected")],
+            false,
+        );
         return;
     };
     let Some(stamped) = entry
@@ -486,7 +615,15 @@ fn draw_meta(frame: &mut Frame, app: &App, session: &Session, area: Rect) {
             Some(Err(error)) => format!("analysis failed: {error}"),
             _ => "analysis in progress…".to_string(),
         };
-        frame.render_widget(Paragraph::new(text), inner);
+        render_scrolled_lines(
+            frame,
+            app,
+            ScrollTarget::Detail,
+            area,
+            " metadata ",
+            vec![Line::from(text)],
+            false,
+        );
         return;
     };
     let analysis = &stamped.analysis;
@@ -515,7 +652,15 @@ fn draw_meta(frame: &mut Frame, app: &App, session: &Session, area: Rect) {
             )));
         }
     }
-    frame.render_widget(Paragraph::new(lines), inner);
+    render_scrolled_lines(
+        frame,
+        app,
+        ScrollTarget::Detail,
+        area,
+        " metadata ",
+        lines,
+        false,
+    );
 }
 
 fn files(analysis: &deconflict_core::analysis::GroupAnalysis) -> Vec<&FileInfo> {
@@ -536,11 +681,20 @@ fn draw_files(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
     ])
     .split(area);
     let block = Block::default().borders(Borders::ALL).title(" files ");
-    let inner = block.inner(panes[0]);
-    frame.render_widget(block.clone(), panes[0]);
+    let outer = block.inner(panes[0]);
+    frame.render_widget(block, panes[0]);
+    app.file_detail_area = panes[1];
 
     let Some(entry) = app.selected_entry(session) else {
-        frame.render_widget(Paragraph::new("no conflict selected"), inner);
+        render_scrolled_lines(
+            frame,
+            app,
+            ScrollTarget::Detail,
+            panes[0],
+            " files ",
+            vec![Line::from("no conflict selected")],
+            false,
+        );
         app.file_rows.clear();
         return;
     };
@@ -549,7 +703,15 @@ fn draw_files(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
         .as_ref()
         .and_then(|result| result.as_ref().ok())
     else {
-        frame.render_widget(Paragraph::new("analysis in progress…"), inner);
+        render_scrolled_lines(
+            frame,
+            app,
+            ScrollTarget::Detail,
+            panes[0],
+            " files ",
+            vec![Line::from("analysis in progress…")],
+            false,
+        );
         app.file_rows.clear();
         return;
     };
@@ -563,53 +725,81 @@ fn draw_files(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
         Constraint::Length(17),
         Constraint::Length(10),
     ];
-    let rows = all.iter().enumerate().map(|(index, file)| {
-        let name = file.path.file_name().unwrap_or_default().to_string_lossy();
-        let metadata = if index == 0 {
-            "—".to_string()
-        } else {
-            match analysis.meta.get(index - 1) {
-                Some(Some(true)) => "same".to_string(),
-                Some(Some(false)) => "diff".to_string(),
-                _ => "—".to_string(),
-            }
-        };
-        let metadata_tone = match metadata.as_str() {
-            "same" => CellTone::Dim,
-            "diff" => CellTone::Yellow,
-            _ => CellTone::Plain,
-        };
-        let relations = file_relations(analysis, index);
-        let selected = app.selected_file == index;
-        Row::new(vec![
-            styled_cell(format!("#{index}"), CellTone::Bold, selected),
-            styled_cell(
-                truncate(&name, inner.width.saturating_sub(56) as usize),
-                CellTone::Plain,
-                selected,
-            ),
-            styled_cell(
-                size_cell(file.size, base_size.filter(|_| index > 0)),
-                relations[1].2,
-                selected,
-            ),
-            styled_cell(mtime(file), relations[2].2, selected),
-            styled_cell(metadata, metadata_tone, selected),
-        ])
-    });
+    let viewport = outer.height.saturating_sub(1) as usize;
+    let content = all.len();
+    let visible = content > viewport;
+    let table_area = if visible {
+        Rect {
+            width: outer.width.saturating_sub(1),
+            ..outer
+        }
+    } else {
+        outer
+    };
+    draw_scrollbar(frame, app, ScrollTarget::Detail, outer, content, viewport);
+    let offset = app.detail_offset();
+    let rows = all
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(viewport)
+        .map(|(index, file)| {
+            let name = file.path.file_name().unwrap_or_default().to_string_lossy();
+            let metadata = if index == 0 {
+                "—".to_string()
+            } else {
+                match analysis.meta.get(index - 1) {
+                    Some(Some(true)) => "same".to_string(),
+                    Some(Some(false)) => "diff".to_string(),
+                    _ => "—".to_string(),
+                }
+            };
+            let metadata_tone = match metadata.as_str() {
+                "same" => CellTone::Dim,
+                "diff" => CellTone::Yellow,
+                _ => CellTone::Plain,
+            };
+            let relations = file_relations(analysis, index);
+            let selected = app.selected_file == index;
+            Row::new(vec![
+                styled_cell(format!("#{index}"), CellTone::Bold, selected),
+                styled_cell(
+                    truncate(&name, table_area.width.saturating_sub(56) as usize),
+                    CellTone::Plain,
+                    selected,
+                ),
+                styled_cell(
+                    size_cell(file.size, base_size.filter(|_| index > 0)),
+                    relations[1].2,
+                    selected,
+                ),
+                styled_cell(mtime(file), relations[2].2, selected),
+                styled_cell(metadata, metadata_tone, selected),
+            ])
+        });
     let table = Table::new(rows, widths)
         .header(
             Row::new(["#", "file", "size", "mtime", "meta"])
                 .style(Style::default().fg(accent()).add_modifier(Modifier::BOLD)),
         )
         .block(Block::default());
-    frame.render_widget(table, inner);
-    app.file_rows = (0..all.len())
-        .map(|index| Rect {
-            x: inner.x,
-            y: inner.y + 1 + index as u16,
-            width: inner.width,
-            height: 1,
+    frame.render_widget(table, table_area);
+    app.file_rows = all
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(viewport)
+        .enumerate()
+        .map(|(local, (index, _))| {
+            (
+                Rect {
+                    x: table_area.x,
+                    y: table_area.y + 1 + local as u16,
+                    width: table_area.width,
+                    height: 1,
+                },
+                index,
+            )
         })
         .collect();
     draw_file_detail(frame, app, analysis, panes[1]);
@@ -617,17 +807,21 @@ fn draw_files(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
 
 fn draw_file_detail(
     frame: &mut Frame,
-    app: &App,
+    app: &mut App,
     analysis: &deconflict_core::analysis::GroupAnalysis,
     area: Rect,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" file detail ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let detail_width = Block::default().borders(Borders::ALL).inner(area).width;
     let Some(file) = files(analysis).get(app.selected_file).copied() else {
-        frame.render_widget(Paragraph::new("select a file"), inner);
+        render_scrolled_lines(
+            frame,
+            app,
+            ScrollTarget::FileDetail,
+            area,
+            " file detail ",
+            vec![Line::from("select a file")],
+            false,
+        );
         return;
     };
     let mut lines = Vec::new();
@@ -652,15 +846,18 @@ fn draw_file_detail(
     lines.push(Line::from(relation_spans));
     let findings = selected_findings(analysis, app.selected_file);
     if !findings.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled("findings: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(findings.join(", ")),
-        ]));
+        lines.push(Line::from(Span::styled(
+            "findings:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for finding in findings {
+            lines.push(Line::from(format!("  · {finding}")));
+        }
     }
     let content_start = lines.len();
     if file.is_text {
         if let Ok(handle) = std::fs::File::open(&file.path) {
-            for (index, line) in BufReader::new(handle).lines().take(20).enumerate() {
+            for (index, line) in BufReader::new(handle).lines().take(200).enumerate() {
                 match line {
                     Ok(line) => lines.push(Line::from(format!("{:>3} │ {line}", index + 1))),
                     Err(error) => lines.push(Line::from(format!("read error: {error}"))),
@@ -674,7 +871,7 @@ fn draw_file_detail(
         for (name, value) in fields {
             lines.push(Line::from(format!(
                 "{name}: {}",
-                truncate(value, inner.width as usize)
+                truncate(value, detail_width as usize)
             )));
         }
     } else {
@@ -684,7 +881,15 @@ fn draw_file_detail(
             human_size(file.size)
         )));
     }
-    frame.render_widget(Paragraph::new(lines), inner);
+    render_scrolled_lines(
+        frame,
+        app,
+        ScrollTarget::FileDetail,
+        area,
+        " file detail ",
+        lines,
+        false,
+    );
 }
 
 fn file_type_actions(actions: Vec<ActionDescriptor>) -> Vec<ActionDescriptor> {
@@ -892,7 +1097,7 @@ fn draw_actions(
     }
 }
 
-fn draw_errors(frame: &mut Frame, session: &Session, area: Rect) {
+fn draw_errors(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) {
     let status = session.status();
     let mut lines = Vec::new();
     for (path, error) in &status.error_messages {
@@ -909,16 +1114,18 @@ fn draw_errors(frame: &mut Frame, session: &Session, area: Rect) {
     if lines.is_empty() {
         lines.push(Line::from("no errors"));
     }
-    let block = Block::default().borders(Borders::ALL).title("errors");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
-        inner,
+    render_scrolled_lines(
+        frame,
+        app,
+        ScrollTarget::Detail,
+        area,
+        "errors",
+        lines,
+        true,
     );
 }
 
-fn draw_help(frame: &mut Frame, area: Rect) {
+fn draw_help(frame: &mut Frame, app: &mut App, area: Rect) {
     let lines = [
         "Enter  accept recommendation",
         "0..9   keep base / keep copy N",
@@ -934,21 +1141,25 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         "Left / Right  previous / next tab",
         "Up / Down  choose conflict; in files tab choose file",
         "Ctrl-Up / Ctrl-Down  choose conflict regardless of tab",
+        "PageUp / PageDown, Ctrl-PageUp / Ctrl-PageDown  page conflicts",
+        "Shift-Up / Shift-Down  scroll the right pane one line",
+        "Shift-PageUp / Shift-PageDown  scroll the right pane one page",
         "Home / End  first / last conflict",
         "Esc / Ctrl-C  interrupt scan",
         "mouse  click tab, action, conflict or file; drag divider to resize",
+        "mouse wheel / drag scrollbar  scroll conflicts or right pane",
     ]
     .iter()
     .map(|line| Line::from(Span::raw(*line)))
     .collect::<Vec<_>>();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("keyboard shortcuts");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
-        inner,
+    render_scrolled_lines(
+        frame,
+        app,
+        ScrollTarget::Detail,
+        area,
+        "keyboard shortcuts",
+        lines,
+        true,
     );
 }
 
@@ -1051,6 +1262,65 @@ mod tests {
         assert_eq!(truncate("abcdef", 4), "abc…");
         assert_eq!(truncate("abc", 10), "abc");
         assert_eq!(truncate("abc", 0), "");
+    }
+
+    #[test]
+    fn wrapped_height_counts_wrapped_lines() {
+        let lines = vec![Line::from("short"), Line::from("1234567890")];
+        assert_eq!(wrapped_height(&lines, 10), 2);
+        assert_eq!(wrapped_height(&lines, 5), 3);
+    }
+
+    #[test]
+    fn scrollbar_appears_only_for_overflowing_content() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let backend = TestBackend::new(20, 6);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let mut app = App::new();
+        let short = (0..2)
+            .map(|index| Line::from(format!("line {index}")))
+            .collect::<Vec<_>>();
+        terminal
+            .draw(|frame| {
+                render_scrolled_lines(
+                    frame,
+                    &mut app,
+                    ScrollTarget::Detail,
+                    frame.area(),
+                    " test ",
+                    short.clone(),
+                    false,
+                )
+            })
+            .expect("short draw");
+        assert!(app.detail_scroll_meta.track.is_none());
+
+        let long = (0..20)
+            .map(|index| Line::from(format!("line {index}")))
+            .collect::<Vec<_>>();
+        terminal
+            .draw(|frame| {
+                render_scrolled_lines(
+                    frame,
+                    &mut app,
+                    ScrollTarget::Detail,
+                    frame.area(),
+                    " test ",
+                    long.clone(),
+                    false,
+                )
+            })
+            .expect("long draw");
+        assert!(app.detail_scroll_meta.track.is_some());
+        let symbols = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(symbols.contains('█') || symbols.contains('║'), "{symbols}");
     }
 
     #[test]
