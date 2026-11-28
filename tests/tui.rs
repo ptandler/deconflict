@@ -65,6 +65,29 @@ impl Fixture {
         fixture
     }
 
+    fn three() -> Self {
+        let fixture = Self::new();
+        fs::write(
+            fixture.root.join("note (conflicted copy 2026-01-02).txt"),
+            "shared\nbase\nsecond copy\n",
+        )
+        .expect("second conflict");
+        fixture
+    }
+
+    fn with_diff_tool() -> Self {
+        let fixture = Self::new();
+        let exe = std::env::current_exe()
+            .expect("current exe")
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        let mut config = fs::read_to_string(&fixture.config).expect("config");
+        config.push_str(&format!("\n[tools]\ndiff = \"{exe}\"\n"));
+        fs::write(&fixture.config, config).expect("rewrite config");
+        fixture
+    }
+
     fn large() -> Self {
         let fixture = Self::new();
         for index in 0..4000 {
@@ -321,7 +344,59 @@ fn tui_question_mark_lists_commands() {
         ],
     );
     assert!(
-        contains_text(&output, "kind: note.txt"),
+        contains_text(&output, "file type: text"),
+        "output:\n{output}"
+    );
+    fixture.contents_unchanged();
+    drop(fixture.temp);
+}
+
+#[test]
+fn tui_question_mark_lists_executable_commands() {
+    let fixture = Fixture::with_diff_tool();
+    let output = run_pty_stages(
+        &fixture.command_args(),
+        &[
+            (&["(b) keep both", "(q) quit"], b"?"),
+            (&["file type: text", "PlainTerminal"], b"\x03"),
+        ],
+    );
+    assert!(
+        contains_text(&output, "file type: text") && contains_text(&output, "PlainTerminal"),
+        "output:\n{output}"
+    );
+    fixture.contents_unchanged();
+    drop(fixture.temp);
+}
+
+#[test]
+fn tui_group_list_shows_file_count() {
+    let fixture = Fixture::three();
+    let output = run_pty(
+        &fixture.command_args(),
+        b"q",
+        &["note.txt(3x)", "nextcloud"],
+    );
+    assert!(contains_text(&output, "note.txt (3x)"), "output:\n{output}");
+    fixture.contents_unchanged();
+    drop(fixture.temp);
+}
+
+#[test]
+fn tui_diff_uses_selected_file() {
+    let fixture = Fixture::three();
+    let output = run_pty_stages(
+        &fixture.command_args(),
+        &[
+            (&["(b) keep both", "(q) quit"], b"\t"),
+            (&["file detail", "content:base"], b"\x1b[B\x1b[B"),
+            (&["size:↑12B"], b"d"),
+            (&["--- ", "+++ ", "second copy"], b"\x03"),
+        ],
+    );
+    assert!(
+        contains_text(&output, "+second copy")
+            && !contains_text(&output, "+copy with extra content"),
         "output:\n{output}"
     );
     fixture.contents_unchanged();

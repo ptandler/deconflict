@@ -540,14 +540,40 @@ fn tool_command(
 }
 
 pub fn text_diff(analysis: &GroupAnalysis) -> io::Result<String> {
-    let Some(base) = &analysis.base else {
-        return Ok("nothing to diff: no base file\n".into());
+    text_diff_for(analysis, None)
+}
+
+/// Built-in text diff for a chosen file, defaulting to the first copy.
+pub fn text_diff_for(analysis: &GroupAnalysis, selected: Option<&Path>) -> io::Result<String> {
+    let paths = analysis_paths(analysis);
+    let base = analysis.base.as_ref().map(|file| file.path.as_path());
+    let fallback = analysis
+        .copies
+        .first()
+        .map(|file| file.path.as_path())
+        .or(base);
+    let Some(target) = selected.filter(|path| paths.contains(path)).or(fallback) else {
+        return Ok("nothing to diff: no file available\n".into());
     };
-    let Some(copy) = analysis.copies.first() else {
-        return Ok("nothing to diff: no copy file\n".into());
+    let (left, right) = if base == Some(target) {
+        let Some(copy) = analysis.copies.first() else {
+            return Ok("nothing to diff: no copy file\n".into());
+        };
+        (target, copy.path.as_path())
+    } else if let Some(base) = base {
+        (base, target)
+    } else {
+        let Some(other) = paths.iter().copied().find(|path| *path != target) else {
+            return Ok("nothing to diff: no second file\n".into());
+        };
+        (other, target)
     };
-    let base_text = std::fs::read_to_string(&base.path)?;
-    let copy_text = std::fs::read_to_string(&copy.path)?;
+    text_diff_paths(left, right)
+}
+
+fn text_diff_paths(left: &Path, right: &Path) -> io::Result<String> {
+    let base_text = std::fs::read_to_string(left)?;
+    let copy_text = std::fs::read_to_string(right)?;
     let base_lines: Vec<_> = base_text.lines().collect();
     let copy_lines: Vec<_> = copy_text.lines().collect();
     let prefix = base_lines
@@ -571,8 +597,8 @@ pub fn text_diff(analysis: &GroupAnalysis) -> io::Result<String> {
     let copy_end = copy_lines.len() - suffix + context_after;
     let mut output = format!(
         "--- {}\n+++ {}\n@@ -{},{} +{},{} @@\n",
-        base.path.display(),
-        copy.path.display(),
+        left.display(),
+        right.display(),
         start + 1,
         base_end - start,
         start + 1,
@@ -820,5 +846,27 @@ mod tests {
 
         std::fs::write(&copy, "one\nold\nsame\n").unwrap();
         assert_eq!(text_diff(&analysis).unwrap(), "no textual difference\n");
+    }
+
+    #[test]
+    fn text_diff_for_uses_the_selected_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("base.txt");
+        let first = temp.path().join("first.txt");
+        let second = temp.path().join("second.txt");
+        std::fs::write(&base, "one\nshared\n").unwrap();
+        std::fs::write(&first, "one\nfirst copy\n").unwrap();
+        std::fs::write(&second, "one\nsecond copy\n").unwrap();
+        let mut analysis = analysis("text", &base, &first);
+        let second_info = FileInfo {
+            path: second.clone(),
+            ..analysis.copies[0].clone()
+        };
+        analysis.copies.push(second_info);
+        let diff = text_diff_for(&analysis, Some(&second)).unwrap();
+        assert!(diff.contains("+second copy"), "{diff}");
+        assert!(!diff.contains("+first copy"), "{diff}");
+        let base_diff = text_diff_for(&analysis, Some(&base)).unwrap();
+        assert!(base_diff.contains("+first copy"), "{base_diff}");
     }
 }

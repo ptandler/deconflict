@@ -4,8 +4,8 @@ use super::session::{GroupEntry, Session};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use deconflict_core::{
     actions::{
-        actions_for_with_pending, commands_for, quit_actions, text_diff, view_paths,
-        ActionDescriptor, ToolCommand,
+        actions_for_with_pending, commands_for, quit_actions, text_diff_for, ActionDescriptor,
+        ToolCommand,
     },
     analysis::{recommend, recommendation_label},
     config::Config,
@@ -154,16 +154,17 @@ impl App {
         &self,
         session: &'a Session,
     ) -> Option<&'a std::path::Path> {
-        if self.tab != Tab::Files {
-            return None;
-        }
         let analysis = self
             .selected_entry(session)
             .and_then(|entry| entry.analysis.as_ref())
             .and_then(|result| result.as_ref().ok())?;
-        view_paths(&analysis.analysis)
-            .get(self.selected_file)
-            .copied()
+        analysis
+            .analysis
+            .base
+            .iter()
+            .chain(analysis.analysis.copies.iter())
+            .nth(self.selected_file)
+            .map(|file| file.path.as_path())
     }
 
     pub(super) fn actions(
@@ -565,9 +566,10 @@ impl App {
                 }) else {
                     return Ok(());
                 };
+                let selected = self.selected_view_path(session);
                 self.tab = Tab::Diff;
                 self.show_config = false;
-                self.diff_text = Some(match text_diff(&analysis.analysis) {
+                self.diff_text = Some(match text_diff_for(&analysis.analysis, selected) {
                     Ok(diff) => diff,
                     Err(error) => format!("diff unavailable: {error}"),
                 });

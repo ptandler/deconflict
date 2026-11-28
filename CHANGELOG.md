@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust TUI `files` tab details show content/size/modified relations for the selected file; PTY contracts cover `?` command listing and file relations.
 - Rust TUI `Left`/`Right` switch tabs and are documented in `(h)`.
 - Rust TUI `files` detail shows per-file analysis findings (newest, largest, additions-only/deletions-only, recommendation) and prompts to select a copy when `#0` is active.
+- Rust TUI conflict list shows a `(Nx)` suffix for groups with more than two files.
+- Rust TUI `(?)` shows the selected group's file type and concrete commands for the selected file instead of only built-in actions.
 
 ### Changed
 - Rust TUI status now uses two rows: the first keeps timing, phase and decided/error counters; the second shows the current path only while work is pending and phase timings when done.
@@ -48,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust TUI `?` now always opens the command list, even before analysis or without a selected conflict.
 - Rust TUI `files` table widens the size column so size-diff annotations are no longer truncated.
 - Rust TUI selected file cells use a dark background with readable foreground instead of colored text on a bright selection background.
+- Rust TUI built-in diff now uses the selected file in groups with more than two files; file-targeting actions use the same base-first selection order.
 - Rust file tools now work on one selected file from the TUI `files` tab; CLI asks which file to view and offers `b` for both where supported (not for audio).
 - Rust audio view plays one file at a time, prefers GUI audio players and suppresses GUI tool output leaking into the terminal.
 - Rust images moved from an automatic overlay to an explicit `images` tab and scale within that pane instead of overlapping the UI.

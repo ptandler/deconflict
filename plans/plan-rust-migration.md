@@ -307,6 +307,14 @@ Status: Ratatui frontend is implemented on the existing scanner/analysis/resolve
   - Added `analysis::content_finding` plus Rust unit and PTY contracts.
   - Validation: fmt, clippy, all Rust tests (77 lib + 30 binary + 7 cache + 12 cli + 14 core + 1 resolve + 12 PTY), release build and frozen executable contract (7 passed, 1 skipped) green.
 
+**Selection and command feedback — done**
+- User feedback recorded 2026-11-28:
+  - Conflict list shows `(Nx)` when a group has more than two files.
+  - Built-in `diff` uses the selected file in multi-file groups; `text_diff_for` added with unit coverage.
+  - `App::selected_view_path` now follows the base-first `files` table order, so external tools and `(?)` target the selected file consistently.
+  - `(?)` shows `file type: <kind>` plus concrete commands for tool actions on the selected file.
+  - Validation: fmt, clippy, all Rust tests (78 lib + 30 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY), release build and frozen executable contract (7 passed, 1 skipped) green.
+
 **Architecture principles:**
 - `main.rs` is process startup and dispatch only.
 - Core modules remain UI-free and reusable.

@@ -11,7 +11,7 @@ use crate::{
 };
 use chrono::{DateTime, Local};
 use deconflict_core::{
-    actions::{commands_for, ActionKind},
+    actions::{actions_for_with_pending, commands_for, ActionKind},
     analysis::{consider, content_finding, FileInfo, Recommendation},
     config::Config,
     tools::Tools as ExternalTools,
@@ -318,11 +318,17 @@ fn draw_groups(frame: &mut Frame, app: &mut App, session: &Session, area: Rect) 
         } else {
             entry.pattern.as_str()
         };
+        let file_count = entry.group.conflicts.len() + 1;
+        let label = if file_count > 2 {
+            format!("{} ({}x)", entry.label, file_count)
+        } else {
+            entry.label.clone()
+        };
         rows.push(Line::from(vec![
             Span::styled(marker(app, session, index), style),
             Span::raw(" "),
             Span::styled(
-                truncate(&entry.label, inner.width.saturating_sub(14) as usize),
+                truncate(&label, inner.width.saturating_sub(14) as usize),
                 style,
             ),
             Span::styled(format!("  {state}"), style),
@@ -682,19 +688,23 @@ fn draw_file_detail(
 }
 
 fn config_help(app: &App, session: &Session, config: &Config, tools: &ExternalTools) -> String {
-    let label = app
-        .selected_entry(session)
-        .map(|entry| entry.label.clone())
-        .unwrap_or_else(|| "no conflict selected".into());
     let analysis = app
         .selected_entry(session)
         .and_then(|entry| entry.analysis.as_ref())
         .and_then(|result| result.as_ref().ok());
-    let mut lines = vec![format!("kind: {label}")];
-    if analysis.is_none() {
+    let file_type = analysis
+        .map(|stamped| stamped.analysis.kind.clone())
+        .unwrap_or_else(|| "unknown".into());
+    let mut lines = vec![format!("file type: {file_type}")];
+    let Some(stamped) = analysis else {
         lines.push("analysis in progress…".into());
-    }
-    for action in app.actions(session, config, tools) {
+        return lines.join("\n");
+    };
+    let pending = !session.scan_complete() || !session.analysis_complete();
+    let selected = app
+        .selected_view_path(session)
+        .map(std::path::PathBuf::from);
+    for action in actions_for_with_pending(&stamped.analysis, config, tools, pending) {
         lines.push(format!(
             "({}) {} [{}]",
             action.key,
@@ -705,13 +715,6 @@ fn config_help(app: &App, session: &Session, config: &Config, tools: &ExternalTo
             }
         ));
         if matches!(action.kind, ActionKind::Tool { .. }) {
-            let Some(stamped) = analysis else {
-                lines.push("  tools available after analysis".into());
-                continue;
-            };
-            let selected = app
-                .selected_view_path(session)
-                .map(std::path::PathBuf::from);
             match commands_for(&stamped.analysis, &action, tools, selected.as_deref()) {
                 Ok(commands) if commands.is_empty() => lines.push("  no files available".into()),
                 Ok(commands) => {
