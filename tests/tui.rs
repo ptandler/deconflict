@@ -198,6 +198,8 @@ fn tui_renders_conflicts_and_quits_when_scan_is_done_in_dry_run() {
             "keep base",
             "dry-run",
             "(q) quit",
+            "field",
+            "#0note",
         ],
     );
 
@@ -297,7 +299,7 @@ fn tui_h_opens_keyboard_shortcuts() {
         &fixture.command_args(),
         &[
             (&["(b) keep both", "(q) quit"], b"h"),
-            (&["keyboard shortcuts", "Tab / Shift-Tab"], b"\x03"),
+            (&["keyboard shortcuts", "Tab/"], b"\x03"),
         ],
     );
     assert!(

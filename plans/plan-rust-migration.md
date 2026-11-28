@@ -291,6 +291,12 @@ Status: Ratatui frontend is implemented on the existing scanner/analysis/resolve
   - `sample-files/` kept at repo root by user decision; Rust media test updated to the root path. Python tests still pointing at `python/sample-files` are part of the reference to retire.
   - Validation: fmt, clippy, all Rust tests (76 lib + 28 binary + 34 integration + 10 PTY), release build and frozen executable contract (7 passed, 1 skipped) green.
 
+**Auto-focus feedback — done**
+- User feedback recorded 2026-11-27:
+  - Start on `log`, then switch to `meta` as soon as the first conflict group appears; do not override tab choices after that.
+  - Done: `App::auto_focus_first_group` switches once on the first group; unit + PTY coverage added.
+  - Validation: fmt, clippy, all Rust tests (76 lib + 29 binary + 34 integration + 10 PTY), release build green.
+
 **Architecture principles:**
 - `main.rs` is process startup and dispatch only.
 - Core modules remain UI-free and reusable.

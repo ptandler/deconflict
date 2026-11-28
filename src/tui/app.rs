@@ -69,6 +69,7 @@ pub(super) struct App {
     pub(super) selected_group: usize,
     pub(super) selected_file: usize,
     pub(super) tab: Tab,
+    auto_meta_switched: bool,
     pub(super) log: Vec<String>,
     pub(super) should_exit: bool,
     pub(super) dragging_split: bool,
@@ -92,6 +93,7 @@ impl App {
             selected_group: 0,
             selected_file: 0,
             tab: Tab::Log,
+            auto_meta_switched: false,
             log: vec![
                 "deconflict TUI — q quit, Q quit when done while scanning, h shortcuts".into(),
             ],
@@ -116,8 +118,16 @@ impl App {
         }
     }
 
+    fn auto_focus_first_group(&mut self, groups: usize) {
+        if !self.auto_meta_switched && groups > 0 {
+            self.tab = Tab::Meta;
+            self.auto_meta_switched = true;
+        }
+    }
+
     pub(super) fn sync(&mut self, session: &Session) {
         let count = session.groups.len();
+        self.auto_focus_first_group(count);
         if count == 0 {
             self.selected_group = 0;
         } else {
@@ -682,6 +692,18 @@ mod tests {
         assert_eq!(Tab::default(), Tab::Log);
         assert_eq!(Tab::Help.next(), Tab::Meta);
         assert_eq!(Tab::Meta.previous(), Tab::Help);
+    }
+
+    #[test]
+    fn first_group_focuses_meta_once() {
+        let mut app = App::new();
+        app.auto_focus_first_group(0);
+        assert_eq!(app.tab, Tab::Log);
+        app.auto_focus_first_group(1);
+        assert_eq!(app.tab, Tab::Meta);
+        app.tab = Tab::Files;
+        app.auto_focus_first_group(2);
+        assert_eq!(app.tab, Tab::Files);
     }
 
     #[test]

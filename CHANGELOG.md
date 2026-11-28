@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Rust TUI status now uses two rows: the first keeps timing, phase and decided/error counters; the second shows the current path only while work is pending and phase timings when done.
+- Rust TUI starts on the `log` tab and switches to `meta` once the first conflict group arrives, without overriding later tab choices.
 - Rust progress wording now uses `discovery` for enumeration and `conflicts` for analysis counts and final summaries in both CLI and TUI; live directory counts are reconciled with the final unique canonical count.
 - Rust `scan` keeps a legacy `conflict group(s)` alias line for frozen executable contracts while using `conflicts` in the main summary.
 - Rust quit actions are now `(q) quit` for immediate cancel and `(Q) quit when scan is done` while work is pending; `Q` is hidden once scanning finishes but remains available as a shortcut.
