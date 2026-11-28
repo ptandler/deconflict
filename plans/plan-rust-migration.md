@@ -297,6 +297,16 @@ Status: Ratatui frontend is implemented on the existing scanner/analysis/resolve
   - Done: `App::auto_focus_first_group` switches once on the first group; unit + PTY coverage added.
   - Validation: fmt, clippy, all Rust tests (76 lib + 29 binary + 34 integration + 10 PTY), release build green.
 
+**Files-tab comparison feedback — done**
+- User feedback recorded 2026-11-27:
+  - Left/right arrows switch tabs; documented in `(h)` help.
+  - `files` tab compares the selected file to `#0`; selecting `#0` prompts to choose a copy to compare against the base.
+  - File detail shows size delta as `↑`/`↓` plus a human-readable difference instead of `smaller`/`larger`.
+  - Selected cells use a darker 256-color background with readable foreground.
+  - File detail shows analysis findings: newest, largest, additions-only/deletions-only/changed content, and recommendation status.
+  - Added `analysis::content_finding` plus Rust unit and PTY contracts.
+  - Validation: fmt, clippy, all Rust tests (77 lib + 30 binary + 7 cache + 12 cli + 14 core + 1 resolve + 12 PTY), release build and frozen executable contract (7 passed, 1 skipped) green.
+
 **Architecture principles:**
 - `main.rs` is process startup and dispatch only.
 - Core modules remain UI-free and reusable.

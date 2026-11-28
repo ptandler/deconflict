@@ -12,7 +12,7 @@ use crate::{
 use chrono::{DateTime, Local};
 use deconflict_core::{
     actions::{commands_for, ActionKind},
-    analysis::FileInfo,
+    analysis::{consider, content_finding, FileInfo, Recommendation},
     config::Config,
     tools::Tools as ExternalTools,
 };
@@ -67,7 +67,7 @@ fn selected_style(tone: CellTone) -> Style {
     }
     Style::default()
         .fg(tone_style(tone).fg.unwrap_or(Color::White))
-        .bg(Color::DarkGray)
+        .bg(Color::Indexed(236))
         .add_modifier(Modifier::BOLD)
 }
 
@@ -127,62 +127,107 @@ fn file_relations(
     let Some(file) = all.get(index).copied() else {
         return Vec::new();
     };
-    let content = if index == 0 {
+    let is_base = index == 0 && analysis.base.is_some();
+    let base = analysis.base.as_ref();
+    let content = if is_base {
         "base".to_string()
-    } else if all.iter().all(|other| other.sha256 == file.sha256) {
-        "identical".to_string()
+    } else if let Some(base) = base {
+        if file.sha256 == base.sha256 {
+            "identical".to_string()
+        } else {
+            "differs".to_string()
+        }
     } else {
         "differs".to_string()
     };
-    let sizes: Vec<u64> = all.iter().map(|file| file.size).collect();
-    let size = if sizes.iter().all(|size| *size == file.size) {
-        "same".to_string()
-    } else if file.size == *sizes.iter().max().unwrap_or(&file.size) {
-        "larger".to_string()
-    } else if file.size == *sizes.iter().min().unwrap_or(&file.size) {
-        "smaller".to_string()
+    let size = if is_base {
+        "base".to_string()
+    } else if let Some(base) = base {
+        if file.size == base.size {
+            "same".to_string()
+        } else if file.size > base.size {
+            format!("↑ {}", human_size(file.size - base.size))
+        } else {
+            format!("↓ {}", human_size(base.size - file.size))
+        }
+    } else {
+        human_size(file.size)
+    };
+    let modified_label = if is_base {
+        "base".to_string()
+    } else if let Some(base) = base {
+        if file.modified == base.modified {
+            "same".to_string()
+        } else if file.modified > base.modified {
+            "newer".to_string()
+        } else {
+            "older".to_string()
+        }
     } else {
         "different".to_string()
     };
-    let modified: Vec<_> = all.iter().map(|file| file.modified).collect();
-    let modified_label = if modified.iter().all(|value| *value == file.modified) {
-        "same".to_string()
-    } else if file.modified == *modified.iter().max().unwrap_or(&file.modified) {
-        "newer".to_string()
-    } else if file.modified == *modified.iter().min().unwrap_or(&file.modified) {
-        "older".to_string()
+    let size_tone = if is_base {
+        CellTone::Bold
+    } else if size.starts_with('↑') || size.starts_with('↓') {
+        CellTone::BoldYellow
+    } else if size == "same" {
+        CellTone::Dim
     } else {
-        "different".to_string()
+        CellTone::Plain
+    };
+    let modified_tone = match modified_label.as_str() {
+        "base" => CellTone::Bold,
+        "same" => CellTone::Dim,
+        "newer" | "older" => CellTone::BoldCyan,
+        _ => CellTone::Plain,
     };
     vec![
         (
             "content",
             content.clone(),
-            if index == 0 {
+            if is_base {
                 CellTone::Bold
             } else {
                 content_tone(&content)
             },
         ),
-        (
-            "size",
-            size.clone(),
-            match size.as_str() {
-                "same" => CellTone::Dim,
-                "larger" | "smaller" => CellTone::BoldYellow,
-                _ => CellTone::Plain,
-            },
-        ),
-        (
-            "modified",
-            modified_label.clone(),
-            match modified_label.as_str() {
-                "same" => CellTone::Dim,
-                "newer" | "older" => CellTone::BoldCyan,
-                _ => CellTone::Plain,
-            },
-        ),
+        ("size", size, size_tone),
+        ("modified", modified_label, modified_tone),
     ]
+}
+
+fn selected_findings(
+    analysis: &deconflict_core::analysis::GroupAnalysis,
+    index: usize,
+) -> Vec<String> {
+    let has_base = analysis.base.is_some();
+    let which = if !has_base {
+        Recommendation::Copy(index)
+    } else if index == 0 {
+        Recommendation::Base
+    } else {
+        Recommendation::Copy(index - 1)
+    };
+    let all = files(analysis);
+    let mut findings = Vec::new();
+    if analysis.winner_hint() == Some(which.clone()) {
+        findings.push("newest".into());
+    }
+    if let (Some(base), Some(file)) = (analysis.base.as_ref(), all.get(index).copied()) {
+        if file.size > base.size && all.iter().all(|other| other.size <= file.size) {
+            findings.push("largest".into());
+        }
+    }
+    if let Some(finding) = content_finding(analysis, &which) {
+        findings.push(finding);
+    }
+    let consideration = consider(analysis, analysis.kind == "text");
+    if consideration.recommendation.as_ref() == Some(&which) {
+        findings.push("recommended".into());
+    } else if consideration.recommendation.is_none() {
+        findings.push("no clear recommendation".into());
+    }
+    findings
 }
 
 pub(super) fn draw(
@@ -580,6 +625,12 @@ fn draw_file_detail(
         return;
     };
     let mut lines = Vec::new();
+    if app.selected_file == 0 && analysis.base.is_some() {
+        lines.push(Line::from(Span::styled(
+            "select a copy to compare with #0 (base)",
+            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
+        )));
+    }
     let relations = file_relations(analysis, app.selected_file);
     let mut relation_spans = Vec::new();
     for (index, (label, value, tone)) in relations.iter().enumerate() {
@@ -593,6 +644,14 @@ fn draw_file_detail(
         relation_spans.push(Span::styled(value.clone(), tone_style(*tone)));
     }
     lines.push(Line::from(relation_spans));
+    let findings = selected_findings(analysis, app.selected_file);
+    if !findings.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("findings: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(findings.join(", ")),
+        ]));
+    }
+    let content_start = lines.len();
     if file.is_text {
         if let Ok(handle) = std::fs::File::open(&file.path) {
             for (index, line) in BufReader::new(handle).lines().take(20).enumerate() {
@@ -602,7 +661,7 @@ fn draw_file_detail(
                 }
             }
         }
-        if lines.is_empty() {
+        if lines.len() == content_start {
             lines.push(Line::from("(empty file)"));
         }
     } else if let Some(fields) = analysis.meta_fields.get(app.selected_file) {
@@ -847,6 +906,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         "Q      quit when scan is done (only while work is pending)",
         "h      show this help",
         "Tab / Shift-Tab / Ctrl-T  cycle tabs",
+        "Left / Right  previous / next tab",
         "Up / Down  choose conflict; in files tab choose file",
         "Ctrl-Up / Ctrl-Down  choose conflict regardless of tab",
         "Home / End  first / last conflict",
@@ -992,7 +1052,7 @@ mod tests {
         if std::env::var_os("NO_COLOR").is_some() {
             assert_eq!(style.bg, None);
         } else {
-            assert_eq!(style.bg, Some(Color::DarkGray));
+            assert_eq!(style.bg, Some(Color::Indexed(236)));
             assert_eq!(style.fg, Some(Color::White));
         }
     }
@@ -1034,9 +1094,28 @@ mod tests {
         let relations = file_relations(&analysis, 1);
         assert_eq!(relations[0].1, "differs");
         assert_eq!(relations[0].2, CellTone::Yellow);
-        assert_eq!(relations[1].1, "larger");
+        assert_eq!(relations[1].1, "↑ 10 B");
         assert_eq!(relations[1].2, CellTone::BoldYellow);
         assert_eq!(relations[2].1, "newer");
         assert_eq!(relations[2].2, CellTone::BoldCyan);
+    }
+
+    #[test]
+    fn selected_findings_include_analysis_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.txt");
+        let copy = dir.path().join("copy.txt");
+        std::fs::write(&base, "one\ntwo\n").unwrap();
+        std::fs::write(&copy, "one\ntwo\nthree\n").unwrap();
+        let mut analysis = deconflict_core::analysis::analyze_group(&base, &[copy]).unwrap();
+        let newer = analysis.base.as_ref().unwrap().modified + std::time::Duration::from_secs(1);
+        analysis.copies[0].modified = newer;
+        let findings = selected_findings(&analysis, 1);
+        assert!(findings.iter().any(|finding| finding == "newest"));
+        assert!(findings.iter().any(|finding| finding == "largest"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding == "additions only (nothing removed)"));
+        assert!(findings.iter().any(|finding| finding == "recommended"));
     }
 }

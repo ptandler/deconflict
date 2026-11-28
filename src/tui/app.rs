@@ -350,6 +350,14 @@ impl App {
                 self.cycle_tab(session, -1);
                 return Ok(());
             }
+            KeyCode::Left => {
+                self.cycle_tab(session, -1);
+                return Ok(());
+            }
+            KeyCode::Right => {
+                self.cycle_tab(session, 1);
+                return Ok(());
+            }
             KeyCode::Char('h') => {
                 self.tab = Tab::Help;
                 return Ok(());

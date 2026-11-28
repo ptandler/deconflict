@@ -215,6 +215,25 @@ pub fn recommendation_label(group: &GroupAnalysis, which: &Recommendation) -> Op
     Some(format!("{}{base} {} (newest)", tag(which), human(info)))
 }
 
+/// Short per-file finding for summaries such as the TUI file detail.
+pub fn content_finding(group: &GroupAnalysis, which: &Recommendation) -> Option<String> {
+    let base = group.base.as_ref()?;
+    let info = file_for(group, which)?;
+    if info.sha256 == base.sha256 {
+        return Some("identical to base".into());
+    }
+    if group.kind != "text" {
+        return Some("content differs from base".into());
+    }
+    if text_superset(base, info).unwrap_or(false) {
+        Some("additions only (nothing removed)".into())
+    } else if text_superset(info, base).unwrap_or(false) {
+        Some("deletions only (nothing added)".into())
+    } else {
+        Some("content changed (additions and/or removals)".into())
+    }
+}
+
 /// Explain checks even when they do not produce a recommendation.
 pub fn consider(group: &GroupAnalysis, is_text_kind: bool) -> Consideration {
     let Some(base) = &group.base else {
@@ -749,6 +768,36 @@ mod recommendation_tests {
         let mut group = analyze_group(&base, &[copy]).unwrap();
         group.copies[0].modified = group.base.as_ref().unwrap().modified + Duration::from_secs(1);
         assert_eq!(recommend(&group, true), Some(Recommendation::Copy(0)));
+    }
+
+    #[test]
+    fn content_finding_reports_additions_deletions_and_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base");
+        let added = dir.path().join("added");
+        let deleted = dir.path().join("deleted");
+        let changed = dir.path().join("changed");
+        std::fs::write(&base, "one\ntwo\n").unwrap();
+        std::fs::write(&added, "one\ntwo\nthree\n").unwrap();
+        std::fs::write(&deleted, "one\n").unwrap();
+        std::fs::write(&changed, "one\nthree\n").unwrap();
+        let analysis = analyze_group(&base, &[added, deleted, changed]).unwrap();
+        assert_eq!(
+            content_finding(&analysis, &Recommendation::Base),
+            Some("identical to base".into())
+        );
+        assert_eq!(
+            content_finding(&analysis, &Recommendation::Copy(0)),
+            Some("additions only (nothing removed)".into())
+        );
+        assert_eq!(
+            content_finding(&analysis, &Recommendation::Copy(1)),
+            Some("deletions only (nothing added)".into())
+        );
+        assert_eq!(
+            content_finding(&analysis, &Recommendation::Copy(2)),
+            Some("content changed (additions and/or removals)".into())
+        );
     }
 
     #[test]

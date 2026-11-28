@@ -299,7 +299,7 @@ fn tui_h_opens_keyboard_shortcuts() {
         &fixture.command_args(),
         &[
             (&["(b) keep both", "(q) quit"], b"h"),
-            (&["keyboard shortcuts", "Tab/"], b"\x03"),
+            (&["keyboard shortcuts", "Left/Right"], b"\x03"),
         ],
     );
     assert!(
@@ -336,12 +336,65 @@ fn tui_files_tab_shows_selected_file_relations() {
         &[
             (&["(b) keep both", "(q) quit"], b"m"),
             (&["field", "#0note", "modified"], b"\t"),
-            (&["file detail", "content:base", "(↑19B)"], b"\x1b[B"),
-            (&["copywithextracontent", "differs"], b"\x03"),
+            (
+                &[
+                    "file detail",
+                    "content:base",
+                    "selectacopytocomparewith#0",
+                    "(↑19B)",
+                ],
+                b"\x1b[B",
+            ),
+            (
+                &["copywithextracontent", "differs", "size:↑19B", "findings:"],
+                b"\x03",
+            ),
         ],
     );
     assert!(contains_text(&output, "file detail"), "output:\n{output}");
     fixture.contents_unchanged();
+    drop(fixture.temp);
+}
+
+#[test]
+fn tui_arrow_keys_switch_tabs() {
+    let fixture = Fixture::new();
+    let output = run_pty_stages(
+        &fixture.command_args(),
+        &[
+            (&["(b) keep both", "(q) quit"], b"\x1b[C"),
+            (&["file detail", "content:base"], b"\x1b[D"),
+            (&["field", "#0note", "modified"], b"\x03"),
+        ],
+    );
+    assert!(
+        contains_text(&output, "file detail") && contains_text(&output, "#0note"),
+        "output:\n{output}"
+    );
+    fixture.contents_unchanged();
+    drop(fixture.temp);
+}
+
+#[test]
+fn tui_file_detail_shows_analysis_findings() {
+    let fixture = Fixture::new();
+    let copy = fixture.root.join("note (conflicted copy 2026-01-01).txt");
+    fs::write(&copy, "shared\nbase\nextra note\n").expect("rewrite copy");
+    let output = run_pty_stages(
+        &fixture.command_args(),
+        &[
+            (&["(b) keep both", "(q) quit"], b"m"),
+            (&["field", "#0note"], b"\t"),
+            (&["file detail", "selectacopytocomparewith#0"], b"\x1b[B"),
+            (&["additionsonly", "recommended"], b"\x03"),
+        ],
+    );
+    assert!(contains_text(&output, "findings:"), "output:\n{output}");
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("note.txt")).expect("base"),
+        "shared\nbase\n"
+    );
+    assert!(copy.exists());
     drop(fixture.temp);
 }
 
