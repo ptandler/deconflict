@@ -16,7 +16,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use deconflict_core::config::Config;
+use deconflict_core::{config::Config, tools::ToolMode};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use session::{Session, SessionOptions, SessionRequest};
 use std::{
@@ -186,10 +186,18 @@ fn event_loop(
         emit_inline_images(terminal, app, session)?;
 
         if let Some((base, commands)) = app.take_pending_tool() {
-            leave_terminal(terminal)?;
+            let capture_output = !commands.is_empty()
+                && commands
+                    .iter()
+                    .all(|command| command.mode == ToolMode::PlainTerminal);
+            if !capture_output {
+                leave_terminal(terminal)?;
+            }
             let lines = App::run_tool(&commands);
-            suspend_terminal(terminal)?;
-            app.finish_tool(&base, lines, session)?;
+            if !capture_output {
+                suspend_terminal(terminal)?;
+            }
+            app.finish_tool(&base, lines, session, capture_output)?;
         }
 
         if app.should_exit {

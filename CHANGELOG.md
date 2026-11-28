@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust TUI `(?)` shows the selected group's file type and only its file-type commands, instead of repeating keep/skip/config/quit actions already shown in the action box.
 - Rust TUI shows scrollbars when the conflict list or a right-pane tab overflows; they respond to mouse wheel and scrollbar dragging.
 - Rust TUI keyboard scrolling: Shift+Up/Down and Shift+PageUp/PageDown scroll the right pane; PageUp/PageDown and Ctrl+PageUp/PageDown page the conflict list.
+- Rust TUI captures output from plain-terminal tools into the `diff` tab and activates it instead of printing over the alternate screen.
 
 ### Changed
 - Rust TUI status now uses two rows: the first keeps timing, phase and decided/error counters; the second shows the current path only while work is pending and phase timings when done.
@@ -54,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust TUI selected file cells use a dark background with readable foreground instead of colored text on a bright selection background.
 - Rust TUI built-in diff now uses the selected file in groups with more than two files; file-targeting actions use the same base-first selection order.
 - Rust TUI file detail lists analysis findings one per line and previews up to 200 text lines, so long content is reachable by scrolling.
+- Rust TUI `(?)` no longer repeats the built-in metadata action or prints tool modes as `Some(Tui)`.
 - Rust file tools now work on one selected file from the TUI `files` tab; CLI asks which file to view and offers `b` for both where supported (not for audio).
 - Rust audio view plays one file at a time, prefers GUI audio players and suppresses GUI tool output leaking into the terminal.
 - Rust images moved from an automatic overlay to an explicit `images` tab and scale within that pane instead of overlapping the UI.

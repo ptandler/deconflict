@@ -330,6 +330,16 @@ Status: Ratatui frontend is implemented on the existing scanner/analysis/resolve
   - PageUp/PageDown and Ctrl+PageUp/PageDown page the conflict list; Ctrl+Up/Down still select conflicts.
   - File detail findings are one per line and text preview cap is 200 scrollable lines.
   - Validation: fmt, clippy, all Rust tests (78 lib + 35 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY) green.
+  - Known limitation accepted for now: scrollbar thumb length is approximate because wrapped line counts are estimated.
+
+**Plain terminal output and (?) polish — done**
+- User feedback recorded 2026-11-28:
+  - Plain-terminal tools now stay inside the alternate screen, capture stdout/stderr with `Command::output()`, and write the result into `diff_text`.
+  - `finish_tool` switches to `Tab::Diff`, clears config help and resets the diff scroll offset.
+  - `(?)` also excludes `(m) metadata`; the expected action keys are diff/images/tool commands only.
+  - Tool mode labels use the bare `ToolMode` debug name (`Tui`, `PlainTerminal`, `Gui`) instead of `Some(...)`.
+  - Validation: fmt, clippy, all Rust tests (78 lib + 37 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY) green.
+
 - `main.rs` is process startup and dispatch only.
 - Core modules remain UI-free and reusable.
 - Config, commands and progress are separate concerns with explicit interfaces.

@@ -923,6 +923,38 @@ impl App {
                 }
                 continue;
             }
+            if command.mode == ToolMode::PlainTerminal {
+                match process.output() {
+                    Ok(output) => {
+                        lines.push(format!(
+                            "$ {} {}",
+                            command.program.display(),
+                            command
+                                .args
+                                .iter()
+                                .map(|arg| arg.to_string_lossy())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ));
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if !stdout.trim().is_empty() {
+                            lines.extend(stdout.lines().map(str::to_string));
+                        }
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        if !stderr.trim().is_empty() {
+                            lines.push("--- stderr ---".into());
+                            lines.extend(stderr.lines().map(str::to_string));
+                        }
+                        lines.push(format!(
+                            "{} finished: {}",
+                            command.program.display(),
+                            output.status
+                        ));
+                    }
+                    Err(error) => lines.push(format!("tool failed: {error}")),
+                }
+                continue;
+            }
             match process.status() {
                 Ok(status) => {
                     lines.push(format!("{} finished: {status}", command.program.display()))
@@ -933,14 +965,26 @@ impl App {
         lines
     }
 
+    fn show_tool_output(&mut self, lines: &[String]) {
+        self.diff_text = Some(lines.join("\n"));
+        self.tab = Tab::Diff;
+        self.show_config = false;
+        self.detail_scroll[Tab::Diff.index()] = 0;
+    }
+
     pub(super) fn finish_tool(
         &mut self,
         base: &std::path::Path,
         lines: Vec<String>,
         session: &mut Session,
+        show_in_diff: bool,
     ) -> Result<(), String> {
-        for line in lines {
-            self.push_log(line);
+        if show_in_diff {
+            self.show_tool_output(&lines);
+        } else {
+            for line in lines {
+                self.push_log(line);
+            }
         }
         session.refresh_analysis(base)?;
         self.sync(session);
@@ -1055,6 +1099,18 @@ mod tests {
         assert_eq!(app.group_scroll, 90);
         app.scroll_to_point(ScrollTarget::Groups, Position::new(0, 0));
         assert_eq!(app.group_scroll, 0);
+    }
+
+    #[test]
+    fn plain_tool_output_switches_to_diff() {
+        let mut app = App::new();
+        app.tab = Tab::Log;
+        app.detail_scroll[Tab::Diff.index()] = 12;
+        app.show_tool_output(&["mp3 diff".into(), "artist: a".into()]);
+        assert_eq!(app.tab, Tab::Diff);
+        assert!(!app.show_config);
+        assert_eq!(app.diff_text.as_deref(), Some("mp3 diff\nartist: a"));
+        assert_eq!(app.detail_offset(), 0);
     }
 
     #[test]

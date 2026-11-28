@@ -903,9 +903,17 @@ fn file_type_actions(actions: Vec<ActionDescriptor>) -> Vec<ActionDescriptor> {
                     | ActionKind::Quit
                     | ActionKind::ForceQuit
                     | ActionKind::Config
+                    | ActionKind::Metadata
             )
         })
         .collect()
+}
+
+fn action_mode_label(action: &ActionDescriptor) -> String {
+    action
+        .mode
+        .map(|mode| format!("{mode:?}"))
+        .unwrap_or_else(|| "built-in".to_string())
 }
 
 fn config_help(app: &App, session: &Session, config: &Config, tools: &ExternalTools) -> String {
@@ -936,10 +944,7 @@ fn config_help(app: &App, session: &Session, config: &Config, tools: &ExternalTo
             "({}) {} [{}]",
             action.key,
             action.label,
-            match &action.kind {
-                ActionKind::Tool { .. } => format!("{:?}", action.mode),
-                _ => "built-in".to_string(),
-            }
+            action_mode_label(&action)
         ));
         if matches!(action.kind, ActionKind::Tool { .. }) {
             match commands_for(&stamped.analysis, &action, tools, selected.as_deref()) {
@@ -1370,7 +1375,30 @@ mod tests {
             .into_iter()
             .map(|action| action.key)
             .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["d", "i", "m", "v"]);
+        assert_eq!(keys, vec!["d", "i", "v"]);
+    }
+
+    #[test]
+    fn action_mode_label_drops_option_wrapper() {
+        use deconflict_core::tools::ToolMode;
+
+        let tool = ActionDescriptor {
+            key: "e".into(),
+            label: "edit".into(),
+            kind: ActionKind::Tool {
+                operation: deconflict_core::actions::ToolOperation::Edit,
+                tool_name: "fresh".into(),
+            },
+            mode: Some(ToolMode::Tui),
+        };
+        let builtin = ActionDescriptor {
+            key: "d".into(),
+            label: "diff".into(),
+            kind: ActionKind::TextDiff,
+            mode: None,
+        };
+        assert_eq!(action_mode_label(&tool), "Tui");
+        assert_eq!(action_mode_label(&builtin), "built-in");
     }
 
     #[test]
