@@ -153,7 +153,7 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
     );
     assert!(!stdout.contains("\u{1b}["));
     for expected in [
-        "Group 1/1 — Readme.md",
+        "Conflict 1/1 — Readme.md",
         "files differ in content",
         "full paths:",
         "metadata diff",
@@ -165,7 +165,7 @@ fn interactive_resolve_prints_analysis_and_uses_recommendation_on_enter() {
         "newest is #1",
         "recommend keep #1",
         "(Enter)",
-        "dry-run complete: 1 group(s)",
+        "dry-run complete: 1 conflict",
     ] {
         assert!(
             stdout.contains(expected),
@@ -208,7 +208,7 @@ fn metadata_action_reprints_the_group_report() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        stdout.matches("Group 1/1 — Readme.md").count() >= 2,
+        stdout.matches("Conflict 1/1 — Readme.md").count() >= 2,
         "{stdout}"
     );
     assert!(stdout.matches("metadata diff").count() >= 2, "{stdout}");
@@ -302,7 +302,7 @@ fn interactive_edit_reanalyzes_the_group_before_accepting_a_choice() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"e\n\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"e\n1\n\n").unwrap();
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -355,7 +355,7 @@ fn wait_modes_show_final_group_positions() {
             stdout,
             String::from_utf8_lossy(&output.stderr),
         );
-        assert!(stdout.contains("Group 1/1 — file"));
+        assert!(stdout.contains("Conflict 1/1 — file"));
         assert!(!stdout.contains("Group ready —"));
     }
 }
@@ -440,7 +440,7 @@ fn interactive_resolve_can_skip_and_quit() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"s\nq\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"s\nQ\n").unwrap();
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -448,10 +448,13 @@ fn interactive_resolve_can_skip_and_quit() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("aborted after 1 of 2 group(s)"), "{stdout}");
+    assert!(
+        stdout.contains("aborted after 1 of 2 conflicts"),
+        "{stdout}"
+    );
     assert!(
         stdout
-            .matches("Finishing pending group analysis; no further groups will be prompted")
+            .matches("Finishing pending conflict analysis; no further conflicts will be prompted")
             .count()
             <= 1
     );
@@ -496,7 +499,7 @@ fn interactive_force_quit_does_not_resolve_or_save_scan_estimate() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"Q\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"q\n").unwrap();
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -505,7 +508,10 @@ fn interactive_force_quit_does_not_resolve_or_save_scan_estimate() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("force quit requested"), "{stdout}");
+    assert!(
+        stdout.contains("quit; scan cancelled and no choices were applied"),
+        "{stdout}"
+    );
     assert!(root.join("file").exists());
     assert!(root.join("file.pacnew").exists());
     assert!(!backup_dir.exists());

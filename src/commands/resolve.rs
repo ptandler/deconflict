@@ -1,7 +1,7 @@
 use crate::{
     cli::{Cli, ResolveArgs},
     cli_config::{detected_tools, effective_scan, general_backup, general_cache, media_tools},
-    progress::perform_scan,
+    progress::{conflict_count, perform_scan},
 };
 use deconflict_core::{
     analysis::{
@@ -13,7 +13,23 @@ use deconflict_core::{
 
 pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
     if args.tui {
-        return Err("the TUI is not implemented yet; use --no-tui".into());
+        if args.auto.is_some() {
+            return Err("--auto and --tui are mutually exclusive".into());
+        }
+        if cli.no_tui {
+            return Err("--tui and --no-tui are mutually exclusive".into());
+        }
+        return crate::tui::run(
+            cli,
+            crate::tui::TuiOptions {
+                dirs: &args.dirs,
+                pattern: args.pattern.as_deref(),
+                no_cache: args.no_cache,
+                refresh: args.refresh,
+                dry_run: args.dry_run,
+                show_progress: args.progress && !args.no_progress,
+            },
+        );
     }
     let (scan_config, patterns, roots, config) = effective_scan(
         cli.config.as_deref(),
@@ -133,7 +149,7 @@ pub(super) fn run(cli: &Cli, args: ResolveArgs) -> Result<(), String> {
         }
     }
     if args.dry_run {
-        println!("dry-run complete: {resolved} group(s)");
+        println!("dry-run complete: {}", conflict_count(resolved));
     } else if !args.no_cache {
         file_cache
             .clear()

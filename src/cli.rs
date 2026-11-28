@@ -13,6 +13,12 @@ pub(crate) struct Cli {
     pub(crate) workers: Option<usize>,
     #[arg(long, global = true)]
     pub(crate) max_in_flight: Option<usize>,
+    #[arg(
+        long,
+        global = true,
+        help = "Force the interactive CLI instead of the TUI in bare mode"
+    )]
+    pub(crate) no_tui: bool,
     #[arg(long)]
     pub(crate) version: bool,
     #[arg(help = "Directories for bare interactive mode")]
@@ -41,9 +47,9 @@ pub(crate) enum Commands {
     Config(ConfigArgs),
     /// Manage the file cache
     Cache(CacheArgs),
-    /// Scan directories and list conflict groups
+    /// Scan directories and list conflicts
     Scan(ScanArgs),
-    /// Resolve conflict groups
+    /// Resolve conflicts
     Resolve(ResolveArgs),
 }
 
@@ -129,11 +135,13 @@ pub(crate) struct ResolveArgs {
     #[arg(
         long,
         conflicts_with = "wait_for_scan",
-        help = "Wait for scanning and all group analyses before prompting"
+        help = "Wait for scanning and all conflict analyses before prompting"
     )]
     pub(crate) wait_for_analysis: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        conflicts_with = "auto",
+        help = "Use the full-screen TUI (requires a terminal)"
+    )]
     pub(crate) tui: bool,
-    #[arg(long)]
-    pub(crate) no_tui: bool,
 }

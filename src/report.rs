@@ -32,8 +32,8 @@ pub(crate) fn group_report_with_width(
 ) -> GroupReport {
     let title = group.base.file_name().unwrap_or_default().to_string_lossy();
     let heading = position.map_or_else(
-        || format!("Group ready — {}", one_line(&title)),
-        |(index, total)| format!("Group {index}/{total} — {}", one_line(&title)),
+        || format!("Conflict ready — {}", one_line(&title)),
+        |(index, total)| format!("Conflict {index}/{total} — {}", one_line(&title)),
     );
     let mut lines = vec![String::new(), style(heading).bold().to_string()];
     if let Some(status) = status {
@@ -82,7 +82,11 @@ pub(crate) fn group_report_with_width(
     }
 }
 
-fn metadata_diff_table(analysis: &GroupAnalysis, base: &FileInfo, copy_index: usize) -> String {
+pub(crate) fn metadata_diff_table(
+    analysis: &GroupAnalysis,
+    base: &FileInfo,
+    copy_index: usize,
+) -> String {
     let copy = &analysis.copies[copy_index];
     let base_fields = analysis.meta_fields.first();
     let copy_fields = analysis.meta_fields.get(copy_index + 1);
@@ -93,9 +97,9 @@ fn metadata_diff_table(analysis: &GroupAnalysis, base: &FileInfo, copy_index: us
     ];
     let content_row = TableRow {
         styles: vec![
-            CellStyle::Plain,
-            content_style(&content_cells[1]),
-            content_style(&content_cells[2]),
+            CellTone::Plain,
+            content_tone(&content_cells[1]),
+            content_tone(&content_cells[2]),
         ],
         cells: content_cells,
     };
@@ -105,11 +109,11 @@ fn metadata_diff_table(analysis: &GroupAnalysis, base: &FileInfo, copy_index: us
         size_cell(copy.size, Some(base.size)),
     ];
     let (base_size_style, copy_size_style) = if base.size > copy.size {
-        (CellStyle::BoldYellow, CellStyle::Plain)
+        (CellTone::BoldYellow, CellTone::Plain)
     } else if copy.size > base.size {
-        (CellStyle::Plain, CellStyle::BoldYellow)
+        (CellTone::Plain, CellTone::BoldYellow)
     } else {
-        (CellStyle::Dim, CellStyle::Dim)
+        (CellTone::Dim, CellTone::Dim)
     };
     let created_cells = vec![
         "created".into(),
@@ -117,9 +121,9 @@ fn metadata_diff_table(analysis: &GroupAnalysis, base: &FileInfo, copy_index: us
         field(copy_fields, "created"),
     ];
     let created_style = if created_cells[1] == created_cells[2] {
-        CellStyle::Dim
+        CellTone::Dim
     } else {
-        CellStyle::Plain
+        CellTone::Plain
     };
     let modified_cells = vec![
         "modified".into(),
@@ -127,22 +131,22 @@ fn metadata_diff_table(analysis: &GroupAnalysis, base: &FileInfo, copy_index: us
         field(copy_fields, "modified"),
     ];
     let modified_styles = match base.modified.cmp(&copy.modified) {
-        std::cmp::Ordering::Less => [CellStyle::Plain, CellStyle::BoldCyan],
-        std::cmp::Ordering::Equal => [CellStyle::Dim, CellStyle::Dim],
-        std::cmp::Ordering::Greater => [CellStyle::BoldCyan, CellStyle::Plain],
+        std::cmp::Ordering::Less => [CellTone::Plain, CellTone::BoldCyan],
+        std::cmp::Ordering::Equal => [CellTone::Dim, CellTone::Dim],
+        std::cmp::Ordering::Greater => [CellTone::BoldCyan, CellTone::Plain],
     };
     let attribute_rows = vec![
         TableRow {
             cells: size_cells,
-            styles: vec![CellStyle::Plain, base_size_style, copy_size_style],
+            styles: vec![CellTone::Plain, base_size_style, copy_size_style],
         },
         TableRow {
             cells: created_cells,
-            styles: vec![CellStyle::Plain, created_style, created_style],
+            styles: vec![CellTone::Plain, created_style, created_style],
         },
         TableRow {
             cells: modified_cells,
-            styles: vec![CellStyle::Plain, modified_styles[0], modified_styles[1]],
+            styles: vec![CellTone::Plain, modified_styles[0], modified_styles[1]],
         },
     ];
     let metadata_keys: BTreeSet<_> = base_fields
@@ -160,15 +164,15 @@ fn metadata_diff_table(analysis: &GroupAnalysis, base: &FileInfo, copy_index: us
             field(copy_fields, key),
         ];
         let style = if cells[1] == cells[2] {
-            CellStyle::Dim
+            CellTone::Dim
         } else {
-            CellStyle::Plain
+            CellTone::Plain
         };
         let row = TableRow {
             cells,
             styles: vec![style, style, style],
         };
-        if style == CellStyle::Dim {
+        if style == CellTone::Dim {
             common_rows.push(row);
         } else {
             differing_rows.push(row);
@@ -207,15 +211,15 @@ fn metadata_wide_table(analysis: &GroupAnalysis, width: usize) -> Option<String>
     }
 
     let mut content_cells = vec!["content".to_string(), "base".to_string()];
-    let mut content_styles = vec![CellStyle::Plain, CellStyle::Bold];
+    let mut content_tones = vec![CellTone::Plain, CellTone::Bold];
     for copy_index in 0..analysis.copies.len() {
         let cell = content_copy_cell(analysis, copy_index);
-        content_styles.push(content_style(&cell));
+        content_tones.push(content_tone(&cell));
         content_cells.push(cell);
     }
     let content_row = TableRow {
         cells: content_cells,
-        styles: content_styles,
+        styles: content_tones,
     };
 
     let size_values: Vec<String> = files
@@ -224,14 +228,14 @@ fn metadata_wide_table(analysis: &GroupAnalysis, width: usize) -> Option<String>
         .collect();
     let all_sizes_equal = files.iter().all(|file| file.size == files[0].size);
     let largest_size = files.iter().map(|file| file.size).max().unwrap_or(0);
-    let size_styles: Vec<CellStyle> = std::iter::once(CellStyle::Plain)
+    let size_styles: Vec<CellTone> = std::iter::once(CellTone::Plain)
         .chain(
             files
                 .iter()
                 .map(|file| match (all_sizes_equal, file.size == largest_size) {
-                    (true, _) => CellStyle::Dim,
-                    (false, true) => CellStyle::BoldYellow,
-                    (false, false) => CellStyle::Plain,
+                    (true, _) => CellTone::Dim,
+                    (false, true) => CellTone::BoldYellow,
+                    (false, false) => CellTone::Plain,
                 }),
         )
         .collect();
@@ -249,15 +253,15 @@ fn metadata_wide_table(analysis: &GroupAnalysis, width: usize) -> Option<String>
         .iter()
         .all(|value| value == &created_values[0]);
     let created_style = if all_created_equal {
-        CellStyle::Dim
+        CellTone::Dim
     } else {
-        CellStyle::Plain
+        CellTone::Plain
     };
     let created_row = TableRow {
         cells: std::iter::once("created".to_string())
             .chain(created_values)
             .collect(),
-        styles: std::iter::once(CellStyle::Plain)
+        styles: std::iter::once(CellTone::Plain)
             .chain(std::iter::repeat_n(created_style, files.len()))
             .collect(),
     };
@@ -266,14 +270,14 @@ fn metadata_wide_table(analysis: &GroupAnalysis, width: usize) -> Option<String>
         .map(|index| field(analysis.meta_fields.get(index), "modified"))
         .collect();
     let newest = files.iter().map(|file| file.modified).max();
-    let modified_styles: Vec<CellStyle> = std::iter::once(CellStyle::Plain)
+    let modified_styles: Vec<CellTone> = std::iter::once(CellTone::Plain)
         .chain(files.iter().zip(&modified_values).map(|(file, value)| {
             if modified_values.iter().all(|other| other == value) {
-                CellStyle::Dim
+                CellTone::Dim
             } else if Some(file.modified) == newest {
-                CellStyle::BoldCyan
+                CellTone::BoldCyan
             } else {
-                CellStyle::Plain
+                CellTone::Plain
             }
         }))
         .collect();
@@ -298,13 +302,13 @@ fn metadata_wide_table(analysis: &GroupAnalysis, width: usize) -> Option<String>
             .collect();
         let all_equal = values.iter().all(|value| value == &values[0]);
         let style = if all_equal {
-            CellStyle::Dim
+            CellTone::Dim
         } else {
-            CellStyle::Plain
+            CellTone::Plain
         };
         let row = TableRow {
             cells: std::iter::once(key.clone()).chain(values).collect(),
-            styles: std::iter::once(CellStyle::Plain)
+            styles: std::iter::once(CellTone::Plain)
                 .chain(std::iter::repeat_n(style, files.len()))
                 .collect(),
         };
@@ -380,8 +384,8 @@ fn truncate_name(value: &str, limit: usize) -> String {
     )
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CellStyle {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellTone {
     Plain,
     Dim,
     Bold,
@@ -393,14 +397,14 @@ enum CellStyle {
 
 struct TableRow {
     cells: Vec<String>,
-    styles: Vec<CellStyle>,
+    styles: Vec<CellTone>,
 }
 
-fn content_style(value: &str) -> CellStyle {
+pub(crate) fn content_tone(value: &str) -> CellTone {
     match value {
-        "identical" | "=" => CellStyle::Green,
-        "differs" | "≠" => CellStyle::Yellow,
-        _ => CellStyle::Plain,
+        "identical" | "=" => CellTone::Green,
+        "differs" | "≠" => CellTone::Yellow,
+        _ => CellTone::Plain,
     }
 }
 
@@ -449,7 +453,7 @@ fn brief_text_diff(base: &std::path::Path, copy: &std::path::Path) -> Option<Str
         .map(truncate_meta)
 }
 
-fn size_cell(size: u64, other: Option<u64>) -> String {
+pub(crate) fn size_cell(size: u64, other: Option<u64>) -> String {
     let mut value = format!("{} ({} bytes)", human_size(size), grouped_number(size));
     if let Some(other) = other {
         if size == other {
@@ -466,7 +470,7 @@ fn size_cell(size: u64, other: Option<u64>) -> String {
     value
 }
 
-fn human_size(size: u64) -> String {
+pub(crate) fn human_size(size: u64) -> String {
     if size < 1024 {
         return format!("{size} B");
     }
@@ -565,7 +569,7 @@ fn render_table(headers: Vec<String>, sections: Vec<Vec<TableRow>>, caps: &[usiz
     let mut lines = vec![border('┌', '┬', '┐')];
     lines.extend(render_row(
         &headers,
-        &vec![CellStyle::Bold; headers.len()],
+        &vec![CellTone::Bold; headers.len()],
         &widths,
     ));
     lines.push(border('├', '┼', '┤'));
@@ -591,7 +595,7 @@ fn cell_width(value: &str, cap: usize) -> usize {
         .unwrap_or(0)
 }
 
-fn render_row(cells: &[String], styles: &[CellStyle], widths: &[usize]) -> Vec<String> {
+fn render_row(cells: &[String], styles: &[CellTone], widths: &[usize]) -> Vec<String> {
     let split: Vec<Vec<&str>> = cells
         .iter()
         .map(|cell| cell.split('\n').collect())
@@ -615,16 +619,16 @@ fn render_row(cells: &[String], styles: &[CellStyle], widths: &[usize]) -> Vec<S
         .collect()
 }
 
-fn styled_cell(value: &str, cell_style: CellStyle, width: usize) -> String {
+fn styled_cell(value: &str, cell_style: CellTone, width: usize) -> String {
     let padded = pad_cell(value, width);
     match cell_style {
-        CellStyle::Plain => padded,
-        CellStyle::Dim => style(padded).dim().to_string(),
-        CellStyle::Bold => style(padded).bold().to_string(),
-        CellStyle::BoldCyan => style(padded).cyan().bold().to_string(),
-        CellStyle::BoldYellow => style(padded).yellow().bold().to_string(),
-        CellStyle::Green => style(padded).green().to_string(),
-        CellStyle::Yellow => style(padded).yellow().to_string(),
+        CellTone::Plain => padded,
+        CellTone::Dim => style(padded).dim().to_string(),
+        CellTone::Bold => style(padded).bold().to_string(),
+        CellTone::BoldCyan => style(padded).cyan().bold().to_string(),
+        CellTone::BoldYellow => style(padded).yellow().bold().to_string(),
+        CellTone::Green => style(padded).green().to_string(),
+        CellTone::Yellow => style(padded).yellow().to_string(),
     }
 }
 
@@ -672,12 +676,12 @@ mod tests {
             &group,
             &analysis,
             Some((2, 5)),
-            Some("scan in progress; 3 group(s) analyzed so far"),
+            Some("scan in progress; 3 conflicts analyzed so far"),
         );
-        assert!(report.text.contains("Group 2/5 — Readme.md"));
+        assert!(report.text.contains("Conflict 2/5 — Readme.md"));
         assert!(report
             .text
-            .contains("status: scan in progress; 3 group(s) analyzed so far"));
+            .contains("status: scan in progress; 3 conflicts analyzed so far"));
         assert!(report.text.contains("all files identical in content"));
     }
 

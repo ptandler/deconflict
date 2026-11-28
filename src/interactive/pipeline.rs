@@ -2,7 +2,9 @@ use super::prompt::{prompt_choice, PromptChoice};
 use crate::{
     cli::Cli,
     cli_config::{detected_tools, effective_scan, general_backup, general_cache, media_tools},
-    progress::{perform_scan_with_progress_cancel_events, ScanProgress, ScanTimings},
+    progress::{
+        conflict_count, perform_scan_with_progress_cancel_events, ScanProgress, ScanTimings,
+    },
     report::group_report,
 };
 use deconflict_core::{
@@ -31,6 +33,19 @@ use std::{
 };
 
 pub(crate) fn run_bare_cli(cli: &Cli) -> Result<(), String> {
+    if io::stdout().is_terminal() && io::stdin().is_terminal() && !cli.no_tui {
+        return crate::tui::run(
+            cli,
+            crate::tui::TuiOptions {
+                dirs: &cli.dirs,
+                pattern: None,
+                no_cache: false,
+                refresh: false,
+                dry_run: false,
+                show_progress: true,
+            },
+        );
+    }
     let (scan_config, patterns, roots, config) =
         effective_scan(cli.config.as_deref(), cli, &cli.dirs, None)?;
     let show_progress = std::io::stdout().is_terminal();
@@ -90,8 +105,9 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     let snapshots = Arc::new(Mutex::new(HashMap::<PathBuf, FileInfo>::new()));
     let analysis_snapshots = Arc::clone(&snapshots);
     let scan_cancel = Arc::new(AtomicBool::new(false));
-    let scan_progress =
-        ScanProgress::new(show_progress, estimated_file_count).without_finish_message();
+    let scan_progress = ScanProgress::new(show_progress, estimated_file_count)
+        .without_finish_message()
+        .with_error_reporting();
     let prompt_progress = scan_progress.clone();
 
     let analysis_tx = message_tx.clone();
@@ -143,7 +159,7 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
             }
             let _ = analysis_tx.send(PipelineMessage::AnalysisFinished);
         })
-        .map_err(|error| format!("cannot start group analysis worker: {error}"))?;
+        .map_err(|error| format!("cannot start conflict analysis worker: {error}"))?;
 
     let scan_tx = message_tx.clone();
     let scan_roots = roots.to_vec();
@@ -178,7 +194,7 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
             drop(group_tx);
             if dispatch_failed {
                 let _ = scan_tx.send(PipelineMessage::WorkerError(
-                    "group analysis worker stopped before scan completed".into(),
+                    "conflict analysis worker stopped before scan completed".into(),
                 ));
             }
             let _ = scan_tx.send(PipelineMessage::ScanFinished {
@@ -211,10 +227,10 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     let scanner_join = scanner_thread.join();
     let analysis_join = analysis_thread.join();
     scanner_join.map_err(|_| "scanner worker panicked".to_string())?;
-    analysis_join.map_err(|_| "group analysis worker panicked".to_string())?;
+    analysis_join.map_err(|_| "conflict analysis worker panicked".to_string())?;
 
     if state.force_quit {
-        println!("force quit requested; scan cancelled and no choices were applied");
+        println!("quit; scan cancelled and no choices were applied");
         return Ok(());
     }
 
@@ -236,9 +252,9 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
     ensure_group_analyses_complete(&scan_result, &state)?;
     if state.quit {
         println!(
-            "aborted after {} of {} group(s); recorded choices are applied only after a complete scan",
+            "aborted after {} of {}; recorded choices are applied only after a complete scan",
             state.completed,
-            scan_result.groups.len()
+            conflict_count(scan_result.groups.len())
         );
     }
     if scan_result.groups.is_empty() {
@@ -296,9 +312,9 @@ pub(crate) fn run_interactive_scan(request: InteractiveScanRequest<'_>) -> Resul
         }
     }
     if options.dry_run {
-        println!("\ndry-run complete: {resolved} group(s)");
+        println!("\ndry-run complete: {}", conflict_count(resolved));
     } else {
-        println!("\nresolved {resolved} group(s)");
+        println!("\nresolved {}", conflict_count(resolved));
     }
     if state.skipped > 0 {
         println!("({} skipped)", state.skipped);
@@ -336,8 +352,10 @@ enum PipelineMessage {
 #[derive(Default)]
 struct InteractiveState {
     scan_result: Option<Result<ScanResult, String>>,
+    timings: Option<ScanTimings>,
     analyses: BTreeMap<PathBuf, Result<StampedGroupAnalysis, String>>,
     analysis_finished: bool,
+    summary_printed: bool,
     decisions: BTreeMap<PathBuf, Decision>,
     skipped: usize,
     completed: usize,
@@ -364,8 +382,9 @@ impl InteractiveState {
                 self.analyses.insert(group.base.clone(), result);
                 Some(group)
             }
-            PipelineMessage::ScanFinished { result, .. } => {
+            PipelineMessage::ScanFinished { result, timings } => {
                 self.scan_result = Some(result);
+                self.timings = timings;
                 None
             }
             PipelineMessage::AnalysisFinished => {
@@ -377,6 +396,17 @@ impl InteractiveState {
                 None
             }
         }
+    }
+
+    fn summary_once(&mut self, progress: &ScanProgress) -> Option<String> {
+        let complete = self.analysis_finished
+            && self.timings.is_some()
+            && matches!(&self.scan_result, Some(Ok(scan)) if !scan.cancelled && scan.errors.is_empty());
+        if self.summary_printed || !complete {
+            return None;
+        }
+        self.summary_printed = true;
+        self.timings.map(|timings| progress.summary(&timings))
     }
 
     fn scan_failed(&self) -> bool {
@@ -414,7 +444,7 @@ fn collect_interactive_results(
                 context.progress,
                 &mut last_status,
                 Some(if options.wait_for_analysis {
-                    "Waiting for scan and group analysis..."
+                    "Waiting for scan and conflict analysis..."
                 } else {
                     "Waiting for scan to finish..."
                 }),
@@ -486,7 +516,7 @@ fn prompt_sorted_groups(
                 state,
                 context.progress,
                 last_status,
-                Some("Scan complete; waiting for remaining group analysis..."),
+                Some("Scan complete; waiting for remaining conflict analysis..."),
             );
         }
         if state.worker_error.is_some() {
@@ -507,7 +537,7 @@ fn prompt_sorted_groups(
             Some(if options.wait_for_analysis {
                 "Waiting for all group analyses..."
             } else {
-                "Finishing group analysis..."
+                "Finishing conflict analysis..."
             }),
         );
     }
@@ -557,16 +587,12 @@ fn receive_and_record(
     if matches!(&message, PipelineMessage::GroupAnalysisReady { .. }) {
         *last_status = None;
     }
-    if let PipelineMessage::ScanFinished { result, timings } = &message {
-        if let (Some(timings), Ok(scan)) = (timings, result) {
-            if !scan.cancelled && scan.errors.is_empty() {
-                let summary = progress.summary(timings);
-                progress.suspend(|| println!("{summary}"));
-            }
-        }
-    }
     state.waiting_after_choice = false;
-    state.record(message)
+    let group = state.record(message);
+    if let Some(summary) = state.summary_once(progress) {
+        progress.suspend(|| println!("{summary}"));
+    }
+    group
 }
 
 fn prompt_ready_group(
@@ -608,9 +634,15 @@ fn prompt_ready_group(
             Some(display_position),
             status.as_deref(),
         );
+        let pending_work = state.scan_result.is_none() || has_pending_group_analysis(state);
         let choice = context.progress.suspend(|| {
             println!("{}", report.text);
-            prompt_choice(&stamped.analysis, context.config, context.external_tools)
+            prompt_choice(
+                &stamped.analysis,
+                context.config,
+                context.external_tools,
+                pending_work,
+            )
         });
         match choice {
             Ok(PromptChoice::Resolve(decision)) => {
@@ -670,11 +702,13 @@ fn group_status(state: &InteractiveState) -> Option<String> {
     let analyzed = state.analyses.len();
     if state.scan_result.is_none() {
         Some(format!(
-            "scan in progress; {analyzed} group(s) analyzed so far"
+            "scan in progress; {} analyzed so far",
+            conflict_count(analyzed)
         ))
     } else if !state.analysis_finished {
         Some(format!(
-            "scan complete; {analyzed} group(s) analyzed, analysis still running"
+            "scan complete; {} analyzed, analysis still running",
+            conflict_count(analyzed)
         ))
     } else {
         None
@@ -687,13 +721,13 @@ fn waiting_status(state: &InteractiveState) -> Option<&'static str> {
         return None;
     }
     if state.waiting_after_choice {
-        return Some("Choice recorded; waiting for the next stable group...");
+        return Some("Choice recorded; waiting for the next stable conflict...");
     }
     if state.force_quit {
         if state.scan_result.is_none() {
-            Some("Force quit requested; stopping the scan...")
+            Some("Quit requested; stopping the scan...")
         } else if has_pending_group_analysis(state) {
-            Some("Stopping pending group analysis...")
+            Some("Stopping pending conflict analysis...")
         } else {
             None
         }
@@ -701,14 +735,14 @@ fn waiting_status(state: &InteractiveState) -> Option<&'static str> {
         if state.scan_result.is_none() {
             Some("Quit requested; finishing the scan to preserve recorded choices...")
         } else if has_pending_group_analysis(state) {
-            Some("Finishing pending group analysis; no further groups will be prompted...")
+            Some("Finishing pending conflict analysis; no further conflicts will be prompted...")
         } else {
             None
         }
     } else if state.scan_result.is_none() {
-        Some("Scanning and analyzing groups; waiting for the next stable group...")
+        Some("Scanning and analyzing conflicts; waiting for the next stable conflict...")
     } else if has_pending_group_analysis(state) {
-        Some("Scan complete; waiting for remaining group analysis...")
+        Some("Scan complete; waiting for remaining conflict analysis...")
     } else {
         None
     }
@@ -723,7 +757,7 @@ fn has_pending_group_analysis(state: &InteractiveState) -> bool {
         .any(|group| !state.analyses.contains_key(&group.base))
 }
 
-fn ensure_scan_complete(scan: &ScanResult) -> Result<(), String> {
+pub(crate) fn ensure_scan_complete(scan: &ScanResult) -> Result<(), String> {
     if scan.cancelled || !scan.errors.is_empty() {
         let detail = scan
             .errors
@@ -743,7 +777,7 @@ fn ensure_group_analyses_complete(
     state: &InteractiveState,
 ) -> Result<(), String> {
     if !state.analysis_finished {
-        return Err("group analysis did not finish".into());
+        return Err("conflict analysis did not finish".into());
     }
     for group in &scan.groups {
         match state.analyses.get(&group.base) {
@@ -787,7 +821,7 @@ mod tests {
         };
         assert_eq!(
             waiting_status(&state),
-            Some("Choice recorded; waiting for the next stable group...")
+            Some("Choice recorded; waiting for the next stable conflict...")
         );
 
         state
@@ -804,7 +838,7 @@ mod tests {
         };
         assert_eq!(
             waiting_status(&state),
-            Some("Scan complete; waiting for remaining group analysis...")
+            Some("Scan complete; waiting for remaining conflict analysis...")
         );
     }
 

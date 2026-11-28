@@ -1,31 +1,20 @@
 [tools]
+rust = "1.100.0"
 python = "3.13"
 uv = "latest"
 
-[tasks.format]
-description = "Format"
-run = [
-    "uv run ruff format .",
-    "uv run ruff check --fix",
-]
-
 [tasks.check]
-description = "Lint + format-check + tests (CI does the same)"
+description = "Format check + clippy + tests (CI does the same)"
 run = [
-#    "uv sync --extra dev", # done in CI setup (and local)
-    "uv run ruff format --check .",
-    "uv run ruff check .",
-    "uv run pytest",
+    "cargo fmt --all -- --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test --all-targets",
 ]
 
-[tasks.version]
-description = "Show and manage package versions"
-run = "uv version"
+[tasks.python-check]
+description = "Run the frozen Python reference checks"
+run = "uv run --directory python --extra dev python -m pytest tests -q"
 
-[tasks.devenv]
-description = "Install editable into global uv PATH for local testing"
-run = "uv tool install --editable ."
-
-[tasks.install]
-description = "Install into global uv PATH"
-run = "uv tool install ."
+[tasks.build]
+description = "Release build"
+run = "cargo build --release"

@@ -15,13 +15,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust analysis tables use terminal-aware color and emphasis, and include all available ExifTool audio/image metadata.
 - Rust interactive reports show group positions and pending-work status, `(m)` reprints the report, and `(?)` maps each offered action to its actual command for every file kind.
 - Rust groups with 3+ files render one wide metadata table when the terminal allows it, with wrapped file headers instead of one table per copy; 3- and 4-file sample groups were added under `sample_files/`.
+- Experimental Rust TUI with a mouse-resizable group/detail split, metadata/files/diff/log tabs, action buttons and CLI-style status rows; available via `resolve --tui` and bare TTY invocation, with `--no-tui` forcing CLI fallback.
+- Rust TUI PTY contracts cover dry-run rendering, buffered skip, real keep-base resolution, forced cancel, Ctrl-C exit, quit with no groups and non-TTY rejection.
+- Rust TUI shares live counters, elapsed time and the final scan summary with the CLI, shows the conflict count in the title row, and offers mouse-selectable tabs.
+- Rust TUI has a `(h)` keyboard-shortcuts tab, hides tabs with no content, and can show scaled image pairs side by side on kitty terminals.
+- Rust TUI `files` tab details show content/size/modified relations for the selected file; PTY contracts cover `?` command listing and file relations.
+
+### Changed
+- Rust TUI status now uses two rows: the first keeps timing, phase and decided/error counters; the second shows the current path only while work is pending and phase timings when done.
+- Rust progress wording now uses `discovery` for enumeration and `conflicts` for analysis counts and final summaries in both CLI and TUI; live directory counts are reconciled with the final unique canonical count.
+- Rust `scan` keeps a legacy `conflict group(s)` alias line for frozen executable contracts while using `conflicts` in the main summary.
+- Rust quit actions are now `(q) quit` for immediate cancel and `(Q) quit when scan is done` while work is pending; `Q` is hidden once scanning finishes but remains available as a shortcut.
+- Rust is now the main project at the repository root (version 0.3.0); the frozen Python reference and its fixtures moved under `python/`, with Rust-first CI and publish workflows and a rewritten README.
+- README documents how final `discovery`/`analysis`/`waiting`/`total` timings are counted.
 
 ### Fixed
+- Rust TUI `q` now keeps the CLI-style progress bar visible until scan and group analysis complete, unless progress is disabled.
+- Rust TUI analysis counter now tracks rich group analysis results instead of provisional scanner copies; elapsed time stops at scan/analysis completion in both CLI and TUI.
+- Rust CLI always reports scan errors to stderr, including with `--no-progress`; Rust TUI exposes scan and analysis errors in an `errors` tab.
 - Rust interactive scan progress pauses while a prompt is open; wait messages are shown only while work remains.
 - Rust scanning reports cancellation reliably and analysis detects disappearing base files.
 - Rust metadata reports distinguish creation and modification times and display local timestamps.
 - Rust scan summaries print immediately on completion and exclude time spent waiting for interactive input.
 - Rust interactive analysis reuses scanner file snapshots, hashing each conflict copy once; stale snapshots are re-hashed.
+- Rust TUI tab hit targets now match rendered padded tab widths, so clicking `diff` no longer selects `log`.
+- Rust final scan timing reports unaccounted time as `waiting` instead of leaving a large gap between phase and total durations.
+- Rust metadata diff table keeps its color cues in the TUI, and the `files` table uses the same colors for size and modification-time differences.
+- Rust TUI `?` now always opens the command list, even before analysis or without a selected conflict.
+- Rust TUI `files` table widens the size column so size-diff annotations are no longer truncated.
+- Rust TUI selected file cells use a dark background with readable foreground instead of colored text on a bright selection background.
+- Rust file tools now work on one selected file from the TUI `files` tab; CLI asks which file to view and offers `b` for both where supported (not for audio).
+- Rust audio view plays one file at a time, prefers GUI audio players and suppresses GUI tool output leaking into the terminal.
+- Rust images moved from an automatic overlay to an explicit `images` tab and scale within that pane instead of overlapping the UI.
+- Rust TUI no longer prints per-file `moved:` lines into the normal terminal.
+- Rust CLI and TUI map TUI Ctrl-C and Esc to interrupt.
+- Rust progress no longer estimates an unreliable ETA; it shows elapsed time only.
+- Rust TUI uses a stronger selected-tab highlight, starts on the log tab, drains queued input while scanning, and reserves a bottom hint row for `(h)`.
 - Rust ExifTool parsing now reads its JSON output, preserving metadata keys and values instead of misreading colon-delimited dates as field names.
 - Experimental Rust analysis detects some Unix file changes even when modification time is restored.
 - Bare invocation (`deconflict [dirs]`) no longer crashes with `typer.exceptions.Exit: 0` when there is nothing to resolve — Typer's `Exit`/`Abort`/`BadParameter` are now translated into process exit codes

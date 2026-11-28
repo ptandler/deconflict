@@ -1,7 +1,7 @@
 name: publish
 
-# Publish to PyPI with Trusted Publishing (OIDC) — no API token needed.
-# Triggered by pushing a version tag like v0.1.0.
+# Triggered by pushing a version tag like v0.3.0.
+
 on:
   push:
     tags:
@@ -9,15 +9,25 @@ on:
 
 permissions:
   contents: read
-  id-token: write # required for PyPI trusted publishing
+  id-token: write
 
 jobs:
-  publish:
+  crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  pypi:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - name: Build
-        run: uv build
+      - name: Build frozen Python reference
+        run: uv build --project python
       - name: Publish to PyPI
-        run: uv publish
+        run: uv publish python/dist/*

@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn python_cache_unicode_round_trip() {
         let dir = tempfile::tempdir().unwrap();
-        let project = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let project = Path::new(env!("CARGO_MANIFEST_DIR"));
         let script = r#"
 import sys
 from pathlib import Path
@@ -324,7 +324,7 @@ c.put(Path('/café/😀\nfile'), 9007199254740993, 1234.125, 'hash-é😀', True
 c.save()
 "#;
         let status = Command::new("python3")
-            .env("PYTHONPATH", project.join("src"))
+            .env("PYTHONPATH", project.join("python/src"))
             .args(["-c", script])
             .arg(dir.path())
             .status()
@@ -348,7 +348,7 @@ assert c.get(Path('/café/😀\nfile'), 9007199254740993, 1234.125)['sha'] == 'h
 assert c.get(Path('/日本/😺'), 42, 4.5)['sha'] == 'rust-λ'
 "#;
         assert!(Command::new("python3")
-            .env("PYTHONPATH", project.join("src"))
+            .env("PYTHONPATH", project.join("python/src"))
             .args(["-c", check])
             .arg(dir.path())
             .status()

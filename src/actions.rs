@@ -19,6 +19,7 @@ pub enum ActionKind {
     Quit,
     ForceQuit,
     TextDiff,
+    ViewImages,
     Metadata,
     Config,
     Tool {
@@ -84,7 +85,7 @@ pub fn actions_for(
         ));
     }
     actions.push(action(
-        "h",
+        "b",
         "keep both",
         ActionKind::Resolve(Decision::KeepBoth),
         None,
@@ -95,8 +96,38 @@ pub fn actions_for(
 
     actions.push(action("m", "metadata", ActionKind::Metadata, None));
     actions.push(action("?", "tools/config", ActionKind::Config, None));
-    actions.push(action("q", "quit after scan", ActionKind::Quit, None));
-    actions.push(action("Q", "force quit", ActionKind::ForceQuit, None));
+    actions.push(action("q", "quit", ActionKind::Quit, None));
+    actions
+}
+
+/// Action list for a frontend that knows whether work is still pending.
+///
+/// `q` always cancels immediately. `Q` is only offered while work is pending;
+/// once the scan is done, quitting already applies every recorded choice.
+pub fn actions_for_with_pending(
+    analysis: &GroupAnalysis,
+    config: &Config,
+    tools: &Tools,
+    pending_work: bool,
+) -> Vec<ActionDescriptor> {
+    let mut actions = actions_for(analysis, config, tools);
+    if pending_work {
+        actions.extend(quit_actions(true).into_iter().skip(1));
+    }
+    actions
+}
+
+/// Quit actions for screens without a selected, analyzed group.
+pub fn quit_actions(pending_work: bool) -> Vec<ActionDescriptor> {
+    let mut actions = vec![action("q", "quit", ActionKind::Quit, None)];
+    if pending_work {
+        actions.push(action(
+            "Q",
+            "quit when scan is done",
+            ActionKind::ForceQuit,
+            None,
+        ));
+    }
     actions
 }
 
@@ -119,6 +150,10 @@ fn add_file_actions(
         .as_ref()
         .zip(edit.as_ref())
         .is_some_and(|(view, edit)| tools.get(view) == tools.get(edit));
+
+    if kind == "image" {
+        actions.push(action("i", "images", ActionKind::ViewImages, None));
+    }
 
     if kind == "kdbx" {
         if has_sibling {
@@ -253,6 +288,16 @@ fn config_tool(section: &toml::Table, kind: &str, fallback: &str) -> String {
 
 fn view_tool(config: &Config, kind: &str, tools: &Tools) -> Option<String> {
     let tool = view_tool_name(config, kind)?;
+    if kind == "audio" {
+        if tools.available(&tool) && tools.mode(&tool) == ToolMode::Gui {
+            return Some(tool);
+        }
+        for name in tools.candidates("audio_player") {
+            if tools.available(&name) && tools.mode(&name) == ToolMode::Gui {
+                return Some(name);
+            }
+        }
+    }
     if tools.available(&tool) {
         Some(tool)
     } else if matches!(kind, "audio" | "image" | "video") && tools.available("viewer") {
@@ -345,6 +390,7 @@ pub fn commands_for(
     analysis: &GroupAnalysis,
     action: &ActionDescriptor,
     tools: &Tools,
+    selected: Option<&Path>,
 ) -> Result<Vec<ToolCommand>, String> {
     let ActionKind::Tool {
         operation,
@@ -360,12 +406,15 @@ pub fn commands_for(
         .to_path_buf();
     let mode = tools.mode(tool_name);
     let paths = analysis_paths(analysis);
-    let target = analysis
+    let default_target = analysis
         .copies
         .first()
         .map(|file| file.path.as_path())
         .or_else(|| analysis.base.as_ref().map(|file| file.path.as_path()))
         .ok_or_else(|| "no file is available for this action".to_string())?;
+    let target = selected
+        .filter(|path| paths.contains(path))
+        .unwrap_or(default_target);
     let sibling = paths.iter().copied().find(|path| *path != target);
 
     let mut commands = Vec::new();
@@ -385,19 +434,19 @@ pub fn commands_for(
         }
         ToolOperation::View if matches!(analysis.kind.as_str(), "text" | "other" | "office") => {
             let mut args = vec![target.as_os_str().to_os_string()];
-            if let Some(sibling) = sibling {
-                args.push(sibling.as_os_str().to_os_string());
+            if selected.is_none() {
+                if let Some(sibling) = sibling {
+                    args.push(sibling.as_os_str().to_os_string());
+                }
             }
             commands.push(tool_command(&program, mode, args));
         }
         ToolOperation::View => {
-            for path in std::iter::once(target).chain(paths.into_iter().filter(|p| *p != target)) {
-                commands.push(tool_command(
-                    &program,
-                    mode,
-                    [path.as_os_str().to_os_string()],
-                ));
-            }
+            commands.push(tool_command(
+                &program,
+                mode,
+                [target.as_os_str().to_os_string()],
+            ));
         }
         ToolOperation::Edit if matches!(analysis.kind.as_str(), "text" | "other" | "office") => {
             let mut args = vec![target.as_os_str().to_os_string()];
@@ -454,6 +503,19 @@ pub fn commands_for(
         }
     }
     Ok(commands)
+}
+
+/// Files available for single-file inspect actions, copy first.
+pub fn view_paths(analysis: &GroupAnalysis) -> Vec<&Path> {
+    let mut paths: Vec<&Path> = analysis
+        .copies
+        .iter()
+        .map(|file| file.path.as_path())
+        .collect();
+    if let Some(base) = &analysis.base {
+        paths.push(base.path.as_path());
+    }
+    paths
 }
 
 fn analysis_paths(analysis: &GroupAnalysis) -> Vec<&Path> {
@@ -581,12 +643,87 @@ mod tests {
         assert!(keys.contains(&"e"));
         assert!(keys.contains(&"m"));
         assert!(!keys.contains(&"v"));
-        assert!(actions.iter().any(|action| action.key == "Q"));
+        assert!(actions.iter().any(|action| action.key == "q"));
 
         let without_tools = actions_for(&analysis, &config, &Tools::default());
         assert!(!without_tools
             .iter()
             .any(|action| matches!(action.kind, ActionKind::Tool { .. })));
+    }
+
+    #[test]
+    fn quit_when_done_is_hidden_once_work_is_complete() {
+        let analysis = analysis("text", Path::new("base.txt"), Path::new("copy.txt"));
+        let tools = available_tools(&["editor"]);
+        let config = Config::default();
+
+        let pending = actions_for_with_pending(&analysis, &config, &tools, true);
+        assert!(pending.iter().any(|action| action.key == "Q"));
+        assert!(pending.iter().any(|action| action.key == "q"));
+
+        let done = actions_for_with_pending(&analysis, &config, &tools, false);
+        assert!(!done.iter().any(|action| action.key == "Q"));
+        assert!(done.iter().any(|action| action.key == "q"));
+
+        assert_eq!(
+            quit_actions(false)
+                .iter()
+                .map(|action| action.key.as_str())
+                .collect::<Vec<_>>(),
+            ["q"]
+        );
+        assert_eq!(
+            quit_actions(true)
+                .iter()
+                .map(|action| action.key.as_str())
+                .collect::<Vec<_>>(),
+            ["q", "Q"]
+        );
+    }
+
+    #[test]
+    fn image_actions_offer_the_inline_images_tab() {
+        let analysis = analysis(
+            "image",
+            Path::new("/scan/base.png"),
+            Path::new("/scan/copy.png"),
+        );
+        let actions = actions_for(&analysis, &Config::default(), &Tools::default());
+        assert!(actions
+            .iter()
+            .any(|action| { action.key == "i" && matches!(action.kind, ActionKind::ViewImages) }));
+    }
+
+    #[test]
+    fn selected_file_limits_view_commands_to_one_file() {
+        let base = Path::new("/scan/base.jpg");
+        let copy = Path::new("/scan/copy.jpg");
+        let analysis = analysis("image", base, copy);
+        let tools = available_tools(&["viewer"]);
+        let action = actions_for(&analysis, &Config::default(), &tools)
+            .into_iter()
+            .find(|action| action.key == "v")
+            .unwrap();
+        let commands = commands_for(&analysis, &action, &tools, Some(base)).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].args, [base.as_os_str().to_os_string()]);
+    }
+
+    #[test]
+    fn audio_view_uses_one_gui_player_command() {
+        let analysis = analysis(
+            "audio",
+            Path::new("/scan/base.mp3"),
+            Path::new("/scan/copy.mp3"),
+        );
+        let tools = available_tools(&["audio_player"]);
+        let action = actions_for(&analysis, &Config::default(), &tools)
+            .into_iter()
+            .find(|action| action.key == "v")
+            .unwrap();
+        let commands = commands_for(&analysis, &action, &tools, None).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].mode, ToolMode::Gui);
     }
 
     #[test]
@@ -599,7 +736,7 @@ mod tests {
             .into_iter()
             .find(|action| action.key == "x")
             .unwrap();
-        let commands = commands_for(&analysis, &action, &tools).unwrap();
+        let commands = commands_for(&analysis, &action, &tools, None).unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].args,
@@ -635,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn media_view_opens_the_selected_copy_before_the_base() {
+    fn media_view_opens_one_file_at_a_time() {
         let base = Path::new("/scan/base.jpg");
         let copy = Path::new("/scan/copy.jpg");
         let analysis = analysis("image", base, copy);
@@ -644,11 +781,10 @@ mod tests {
             .into_iter()
             .find(|action| action.key == "v")
             .unwrap();
-        let commands = commands_for(&analysis, &action, &tools).unwrap();
+        let commands = commands_for(&analysis, &action, &tools, None).unwrap();
 
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].args, [copy.as_os_str().to_os_string()]);
-        assert_eq!(commands[1].args, [base.as_os_str().to_os_string()]);
     }
 
     #[test]

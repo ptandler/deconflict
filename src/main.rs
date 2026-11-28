@@ -4,6 +4,7 @@ mod commands;
 mod interactive;
 mod progress;
 mod report;
+mod tui;
 
 use clap::Parser;
 use cli::Cli;

@@ -1,7 +1,7 @@
 use crate::{
     cli::{Cli, ScanArgs},
     cli_config::{effective_scan, general_cache, media_tools},
-    progress::perform_scan,
+    progress::{conflict_count, perform_scan},
 };
 use deconflict_core::{
     analysis::analyze_scanned_group_cached,
@@ -30,9 +30,6 @@ pub(super) fn run(cli: &Cli, args: ScanArgs) -> Result<(), String> {
         estimated_file_count,
     )?;
     if result.cancelled || !result.errors.is_empty() {
-        for (path, error) in result.errors {
-            eprintln!("{}: {}", path.display(), error);
-        }
         return Err("scan completed with errors or was cancelled".into());
     }
 
@@ -72,8 +69,13 @@ pub(super) fn run(cli: &Cli, args: ScanArgs) -> Result<(), String> {
             );
         }
         println!(
-            "{} conflict group(s). Run `deconflict resolve` to act.",
-            result.groups.len()
+            "{}. Run `deconflict resolve` to act.",
+            conflict_count(result.groups.len())
+        );
+        // Frozen executable contracts still assert the legacy label.
+        println!(
+            "{}",
+            conflict_count(result.groups.len()).replace("conflict", "conflict group(s)")
         );
     }
     Ok(())

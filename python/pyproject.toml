@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deconflict"
-version = "0.2.9"
-description = "Interactive resolver for 'conflicted copy'-style sync conflict files (Nextcloud, pacman, Syncthing)."
+version = "0.3.0"
+description = "Frozen Python reference for deconflict (Rust is now the main implementation)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

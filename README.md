@@ -1,115 +1,85 @@
-# deconflict - help me solving sync file conflicts!
+# deconflict — help me solve sync file conflicts!
 
-Interactive resolver for **"conflicted copy"-style sync conflict files**.
-Supports:
+Interactive resolver for **“conflicted copy”-style sync conflict files**. Supports:
+
 - [Nextcloud](https://nextcloud.com/) `(conflicted copy YYYY-MM-DD HHMMSS)`
 - [pacman](https://wiki.archlinux.org/title/Pacman) `.pacnew/.pacsave/.pacorig`
 - [Syncthing](https://syncthing.net/) `.sync-conflict-*`
 
-It's Pattern-driven and generic, so custom formats can be added via the config.
-
-It is similar to the `pacdiff` for pacman. In order to be helpful with other file formats and not just plain text, it
-supports several viewers, editors, diff tools, and also extracts metadata (images, audio, video) 
-and also shows metadata diffs.
+The Rust implementation is the main application (version 0.3.0). Pattern matching is generic, so custom formats can be added through config. Viewers, editors, diff tools and metadata extraction are optional; external tools are detected at runtime and never required.
 
 ## Install
 
-Clone this repo.
-
 ```sh
-mise install             # a very convenient way to install `python` and `uv` 
-uv sync                  # install python dependencies
-uv tool install .        # install deconflict to PATH (or: instead of uv use `pipx install .`)
+git clone https://github.com/ptandler/deconflict.git
+cd deconflict
+mise install
+cargo install --path .        # or: cargo build --release
 ```
 
 ## Usage
 
-First you should create your config with `deconflict init-config` and then edit the generated
-`~/.config/deconflict/config.toml`. Most likely you want to configure `default_dirs` so that you don't have to pass paths via CLI, and maybe you want also to set `enabled_patterns`.
-
-Then you can simply do `deconflict` and resolve conflicts one by one.
-
-## Commands
+Run `deconflict init-config` once, edit `~/.config/deconflict/config.toml`, then resolve conflicts:
 
 ```sh
-deconflict                            # run `scan`and interactive resolution (TUI if available)
-deconflict ~/Sync                     # scan specific dirs in bare interactive mode
-deconflict scan                       # scan configured dirs and list conflicts
-deconflict scan ~/Sync --pattern pacman
-deconflict scan --no-cache            # bypass the file cache
-deconflict scan --refresh             # clear cache and rebuild metadata
-deconflict scan --progress            # show live scan progress
-deconflict resolve                    # interactive per-group resolution
-deconflict resolve --tui              # launch the Textual TUI
-deconflict resolve --no-tui           # force the CLI resolver
-deconflict resolve --auto newest      # base|copy|newest|bigger|recommended
-deconflict resolve --dry-run          # preview without touching the filesystem
-deconflict init-config                # write ~/.config/deconflict/config.toml
-deconflict config                     # show effective configuration
-deconflict config tools               # show tools used for each file kind
-deconflict setup                      # analyze config and external tools
-deconflict patterns --enabled         # list enabled conflict patterns
-deconflict cache clean                # remove stale cache entries
-deconflict cache clean --dry-run      # preview cache cleanup
-deconflict cache clean --all          # remove every cache file
-deconflict cache clean --older-than-days 30
-deconflict version                    # print the version
-deconflict --help                     # all commands and options
+deconflict                       # scan configured dirs, then interactive resolution/TUI
+deconflict ~/Sync                # scan a specific dir
+deconflict scan --progress       # list conflicts with live progress
+deconflict resolve --tui         # full-screen TUI
+deconflict resolve --no-tui      # CLI resolver
+deconflict resolve --dry-run     # preview without touching the filesystem
+deconflict config tools          # show detected external tools
+deconflict --help                # all commands and options
 ```
 
-## Patterns
+## TUI
 
-| group | enabled | matches |
-|-------|---------|---------|
-| `nextcloud` | on | `name (conflicted copy YYYY-MM-DD HHMMSS)` |
-| `pacman` | on | `*.pacnew`, `*.pacsave`, `*.pacorig` |
-| `syncthing` | on | `*.sync-conflict-*`, `*.sync-conflict-*-EXT` |
-| `dpkg` | off | `*.dpkg-dist`, `*.dpkg-old`, `*.ucf-*` |
-| `rpm` | off | `*.rpmnew`, `*.rpmorig`, `*.rpmold`, `*.rpmignore` |
-| `windows-copy` | off | `* - Copy`, `* (copy)` |
+- `q` quits immediately; `Q` waits for a running scan (only shown while work is pending).
+- `h` opens keyboard shortcuts; Tab/Shift-Tab switch tabs.
+- Mouse clicks on tabs and action buttons are supported.
+- File tools are offered on the `files` tab and act on the selected file.
+- Images have an explicit `images` tab using the kitty graphics protocol when available.
+- Audio opens one file at a time; GUI players are preferred.
 
-Custom regex patterns go under `[[scan.patterns]]` in the config.
+## Resolution
 
-## How conflicts are resolved
-
-For each group you choose (menu adapts to the file type): **(b)ase / (c)opy /
-(v)iew both files in the suggested app / (d)iff in terminal / (m)eld / (e)ditor /
-(h)keep-both / (s)kip / (q)uit / (?)tools.** View opens both the base and the
-conflict copy in the app configured for that kind (editor, office, viewer,
-KeePass merge for `.kdbx`).
-
-Losers are **moved** to a backup dir outside the scan roots (`~/deconflict-backups/…`
-by default) — never hard-deleted. A JSONL decision log records every choice.
-`--dry-run` never touches the filesystem.
+For each conflict group choose base, a copy, keep both, skip, diff, view/edit, metadata or quit. Losers are **moved** to a backup directory outside the scan roots (`~/deconflict-backups/…` by default), never hard-deleted. A JSONL decision log records every choice. `--dry-run` never touches the filesystem.
 
 ## Config
 
-Run `deconflict init-config` for a documented template at
-`~/.config/deconflict/config.toml`. See
-[`src/deconflict/config.example.toml`](src/deconflict/config.example.toml) (shipped in the
-package, so it works from an install).
-`[file_types]` maps each file kind (text, audio, image, video, office, kdbx)
-to the `[tools]` entry that `(v)iew` uses.
+`deconflict init-config` writes a documented template to `~/.config/deconflict/config.toml`. `[scan.default_dirs]` and `[scan.enabled_patterns]` are the usual starting points. `[file_types]` maps text, audio, image, video, office and kdbx files to view tools; `[tools]` contains external tool paths.
 
-## Recommended external apps
-
-Auto-detected at runtime (never required): **meld**/WinMerge (visual diff), **$EDITOR**,
-**eog**/appropriate viewer, **ffprobe** (video), **keepassxc-cli** (KeePass merge),
-**soffice** (office docs), **Kid3/Picard** (mp3 tag editing).
+Built-in patterns: `nextcloud`, `pacman`, `syncthing` (enabled); `dpkg`, `rpm`, `windows-copy` (opt-in). Custom regex patterns go under `[[scan.patterns]]`.
 
 ## Development
 
 ```sh
-mise install      # python 3.13 + uv
-uv sync           # .venv + uv.lock
-uv run deconflict ...   # run the CLI
-mise run check     # ruff check + format-check + pytest
+mise install
+cargo fmt --all
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+mise run check        # all Rust checks (CI does the same)
+mise run python-check # frozen Python reference tests (non-gating in CI)
 ```
+
+The shared CLI contract can be run against the Rust binary after `cargo build --release`:
+
+```sh
+DECONFLICT_EXECUTABLE="$PWD/target/release/deconflict" \
+  uv run --directory python --extra dev python -m pytest tests/test_executable_contract.py -q
+```
+
+Publishing is tag-driven (`.github/workflows/publish.yml`): pushing `v0.3.0` publishes the crate to crates.io and the frozen Python reference to PyPI.
+
+The Python implementation under `python/` is frozen and used only as a behavioral reference. Do not modify it when implementing Rust features.
+
+## Timing breakdown
+
+The final status row reports `discovery`, `analysis`, `waiting` and `total`. All values exclude time explicitly paused by CLI prompts. `discovery` spans scan start to the last discovery event; `analysis` spans the first to the last analysis event; the two windows may overlap. `waiting` is the residual `total - max(discovery, analysis)`: time outside both measured windows, typically interactive decision time in the TUI or other scheduler stalls. It is derived, not a separately measured idle timer.
 
 ## Windows
 
-Uses only `pathlib` operations; `os.name` branches select per-OS tool defaults;
-filename matching is case-insensitive on NT.
+Path handling uses `pathlib`-equivalent Rust APIs; external tool defaults are per-OS and never hard-required. Filename matching is case-insensitive on NT.
 
 ## License
 

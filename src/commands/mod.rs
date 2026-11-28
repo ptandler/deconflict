@@ -10,7 +10,7 @@ use std::fs;
 
 pub(crate) fn run(mut cli: Cli) -> Result<(), String> {
     if cli.version {
-        println!("deconflict 0.2.9");
+        println!("deconflict {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let Some(command) = cli.command.take() else {
@@ -18,7 +18,7 @@ pub(crate) fn run(mut cli: Cli) -> Result<(), String> {
     };
     match command {
         Commands::Version => {
-            println!("deconflict 0.2.9");
+            println!("deconflict {}", env!("CARGO_PKG_VERSION"));
         }
         Commands::Patterns { enabled } => {
             let mut config = deconflict_core::config::ScanConfig::default();
@@ -57,14 +57,14 @@ pub(crate) fn run(mut cli: Cli) -> Result<(), String> {
             }
             fs::write(
                 &target,
-                include_str!("../../../src/deconflict/config.example.toml"),
+                include_str!("../../python/src/deconflict/config.example.toml"),
             )
             .map_err(|e| format!("cannot write config file {}: {e}", target.display()))?;
             println!("wrote config: {}", target.display());
         }
         Commands::Setup => {
             let (config, _) = load_config(cli.config.as_deref())?;
-            println!("deconflict 0.2.9");
+            println!("deconflict {}", env!("CARGO_PKG_VERSION"));
             println!(
                 "  config file: {}",
                 cli.config
