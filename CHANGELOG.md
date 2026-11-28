@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust TUI `Left`/`Right` switch tabs and are documented in `(h)`.
 - Rust TUI `files` detail shows per-file analysis findings (newest, largest, additions-only/deletions-only, recommendation) and prompts to select a copy when `#0` is active.
 - Rust TUI conflict list shows a `(Nx)` suffix for groups with more than two files.
-- Rust TUI `(?)` shows the selected group's file type and concrete commands for the selected file instead of only built-in actions.
+- Rust TUI `(?)` shows the selected group's file type and only its file-type commands, instead of repeating keep/skip/config/quit actions already shown in the action box.
 
 ### Changed
 - Rust TUI status now uses two rows: the first keeps timing, phase and decided/error counters; the second shows the current path only while work is pending and phase timings when done.

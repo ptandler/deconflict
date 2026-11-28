@@ -11,7 +11,7 @@ use crate::{
 };
 use chrono::{DateTime, Local};
 use deconflict_core::{
-    actions::{actions_for_with_pending, commands_for, ActionKind},
+    actions::{actions_for_with_pending, commands_for, ActionDescriptor, ActionKind},
     analysis::{consider, content_finding, FileInfo, Recommendation},
     config::Config,
     tools::Tools as ExternalTools,
@@ -687,6 +687,22 @@ fn draw_file_detail(
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+fn file_type_actions(actions: Vec<ActionDescriptor>) -> Vec<ActionDescriptor> {
+    actions
+        .into_iter()
+        .filter(|action| {
+            !matches!(
+                action.kind,
+                ActionKind::Resolve(_)
+                    | ActionKind::Skip
+                    | ActionKind::Quit
+                    | ActionKind::ForceQuit
+                    | ActionKind::Config
+            )
+        })
+        .collect()
+}
+
 fn config_help(app: &App, session: &Session, config: &Config, tools: &ExternalTools) -> String {
     let analysis = app
         .selected_entry(session)
@@ -704,7 +720,13 @@ fn config_help(app: &App, session: &Session, config: &Config, tools: &ExternalTo
     let selected = app
         .selected_view_path(session)
         .map(std::path::PathBuf::from);
-    for action in actions_for_with_pending(&stamped.analysis, config, tools, pending) {
+    let actions = file_type_actions(actions_for_with_pending(
+        &stamped.analysis,
+        config,
+        tools,
+        pending,
+    ));
+    for action in actions {
         lines.push(format!(
             "({}) {} [{}]",
             action.key,
@@ -1045,6 +1067,40 @@ mod tests {
         assert_eq!(areas[0].0.y, 4);
         assert!(areas.iter().all(|(rect, _)| rect.width == 11));
         assert!(areas.windows(2).all(|pair| pair[0].0.x + 12 == pair[1].0.x));
+    }
+
+    #[test]
+    fn file_type_actions_keep_only_file_actions() {
+        use deconflict_core::{actions::ToolOperation, resolve::Decision};
+
+        let action = |key: &str, kind: ActionKind| ActionDescriptor {
+            key: key.into(),
+            label: key.into(),
+            kind,
+            mode: None,
+        };
+        let actions = vec![
+            action("Enter", ActionKind::Resolve(Decision::KeepBase)),
+            action("s", ActionKind::Skip),
+            action("q", ActionKind::Quit),
+            action("Q", ActionKind::ForceQuit),
+            action("?", ActionKind::Config),
+            action("d", ActionKind::TextDiff),
+            action("i", ActionKind::ViewImages),
+            action("m", ActionKind::Metadata),
+            action(
+                "v",
+                ActionKind::Tool {
+                    operation: ToolOperation::View,
+                    tool_name: "viewer".into(),
+                },
+            ),
+        ];
+        let keys = file_type_actions(actions)
+            .into_iter()
+            .map(|action| action.key)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["d", "i", "m", "v"]);
     }
 
     #[test]

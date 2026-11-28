@@ -315,6 +315,13 @@ Status: Ratatui frontend is implemented on the existing scanner/analysis/resolve
   - `(?)` shows `file type: <kind>` plus concrete commands for tool actions on the selected file.
   - Validation: fmt, clippy, all Rust tests (78 lib + 30 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY), release build and frozen executable contract (7 passed, 1 skipped) green.
 
+**(?) help scope — done**
+- User feedback recorded 2026-11-28:
+  - `(?)` now lists only file-type actions: diff/view/metadata/tool commands.
+  - Removed keep/resolve, skip, tools/config and both quit entries from the help text; the action box already shows them.
+  - Added `file_type_actions` unit coverage.
+  - Validation: fmt, clippy, all Rust tests (78 lib + 31 binary + 7 cache + 12 cli + 14 core + 1 resolve + 15 PTY) green.
+
 **Architecture principles:**
 - `main.rs` is process startup and dispatch only.
 - Core modules remain UI-free and reusable.
